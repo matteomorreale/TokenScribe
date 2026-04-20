@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}New Experiment — {{ study.name }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Studies</a>
+<span class="sep">/</span>
+<a href="{{ url_for('study.detail_study', study_id=study.id) }}">{{ study.name }}</a>
+<span class="sep">/</span>
+<span class="current">New Experiment</span>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Run Experiment</h1>
+    <p class="ts-page-subtitle">Study: {{ study.name }}</p>
+  </div>
+</div>
+
+<div class="ts-grid ts-grid-2" style="align-items:start; gap:1.5rem;">
+  <div>
+    <div class="ts-card" style="margin-bottom:1rem;">
+      <div class="ts-card-header"><span class="ts-card-title">Study Info</span></div>
+      <div style="display:flex; flex-direction:column; gap:.5rem;">
+        <div><span style="color:var(--ts-text-muted); font-size:.8rem;">Prompts</span> <strong>{{ prompts|length }}</strong></div>
+        <div><span style="color:var(--ts-text-muted); font-size:.8rem;">Description</span> <span>{{ study.description or '—' }}</span></div>
+      </div>
+    </div>
+    <div class="ts-card">
+      <div class="ts-card-header"><span class="ts-card-title">Prompts in Study</span></div>
+      {% for p in prompts %}
+      <div style="padding:.5rem 0; border-bottom:1px solid var(--ts-border); font-size:.82rem; font-family:var(--ts-mono);">
+        <span style="color:var(--ts-text-muted);">#{{ p.id }}</span>
+        {{ p.base_text[:80] ~ '…' if p.base_text|length > 80 else p.base_text }}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="ts-card">
+    <form method="post" action="{{ url_for('experiment.new_experiment', study_id=study.id) }}">
+      <div class="ts-form-group">
+        <label class="ts-label">Select Models *</label>
+        <div class="ts-checkbox-group">
+          {% set current_provider = namespace(name='') %}
+          {% for m in models %}
+            {% if m.provider_name != current_provider.name %}
+              {% set current_provider.name = m.provider_name %}
+              <div style="width:100%; margin-top:.5rem; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--ts-accent); padding:.2rem 0;">
+                {{ m.provider_name }}
+              </div>
+            {% endif %}
+            <label class="ts-checkbox-item">
+              <input type="checkbox" name="model_ids" value="{{ m.id }}">
+              {{ m.name }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="ts-form-group">
+        <label class="ts-label" for="notes">Notes (optional)</label>
+        <input class="ts-input" type="text" id="notes" name="notes" placeholder="e.g. First run with Llama models">
+      </div>
+      <div class="ts-card" style="background:rgba(249,199,79,.06); border-color:rgba(249,199,79,.3); margin-bottom:1.25rem; padding:1rem;">
+        <p style="font-size:.82rem; color:var(--ts-warning);">
+          ⚠️ This will call LLM APIs for all approved translations in the study.
+          Ensure API keys are configured in Settings. All results are immutable.
+        </p>
+      </div>
+      <div style="display:flex; gap:.75rem;">
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">Run Experiment</button>
+        <a href="{{ url_for('study.detail_study', study_id=study.id) }}" class="ts-btn ts-btn-secondary ts-btn-lg">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

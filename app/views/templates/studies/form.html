@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit Study' if study else 'New Study' }}{% endblock %}
+
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Studies</a>
+<span class="sep">/</span>
+<span class="current">{{ 'Edit' if study else 'New' }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">{{ 'Edit Study' if study else 'New Study' }}</h1>
+    <p class="ts-page-subtitle">{{ 'Update study details' if study else 'Create a new token efficiency study' }}</p>
+  </div>
+</div>
+
+<div class="ts-card" style="max-width:640px;">
+  <form method="post">
+    <div class="ts-form-group">
+      <label class="ts-label" for="name">Study Name *</label>
+      <input class="ts-input" type="text" id="name" name="name"
+             value="{{ study.name if study else '' }}"
+             placeholder="e.g. Multilingual Instruction Following Study"
+             required autofocus>
+    </div>
+    <div class="ts-form-group">
+      <label class="ts-label" for="description">Description</label>
+      <textarea class="ts-textarea" id="description" name="description"
+                placeholder="Describe the scientific objective of this study…"
+                style="font-family:var(--ts-font);">{{ study.description if study else '' }}</textarea>
+    </div>
+    <div style="display:flex; gap:.75rem; margin-top:1.5rem;">
+      <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
+        {{ 'Save Changes' if study else 'Create Study' }}
+      </button>
+      <a href="{{ url_for('study.list_studies') }}" class="ts-btn ts-btn-secondary ts-btn-lg">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

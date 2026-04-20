@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Scores{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('report.reports_dashboard') }}">Reports</a>
+<span class="sep">/</span>
+<span class="current">Scores</span>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Score Visualization</h1>
+    <p class="ts-page-subtitle">SFS and PEI analysis across runs</p>
+  </div>
+</div>
+
+<!-- Run selector -->
+<div class="ts-card" style="margin-bottom:1.5rem; padding:1rem 1.5rem;">
+  <form method="get" style="display:flex; align-items:center; gap:1rem;">
+    <label class="ts-label" style="margin:0; white-space:nowrap;">Select Run:</label>
+    <select class="ts-select" name="run_id" style="max-width:340px;" onchange="this.form.submit()">
+      <option value="">— All runs —</option>
+      {% for r in runs %}
+      <option value="{{ r.id }}" {{ 'selected' if selected_run and selected_run.id == r.id }}>
+        Run #{{ r.id }} — {{ r.study_name }} ({{ r.timestamp[:10] }})
+      </option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if selected_run and results %}
+<!-- Token stats -->
+<div class="ts-grid ts-grid-4" style="margin-bottom:1.5rem;">
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Results</div>
+    <div class="ts-stat-value">{{ results|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Avg Input Tokens</div>
+    <div class="ts-stat-value">{{ (results|sum(attribute='input_tokens') / results|length)|int }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Avg Output Tokens</div>
+    <div class="ts-stat-value">{{ (results|sum(attribute='output_tokens') / results|length)|int }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Total Cost</div>
+    <div class="ts-stat-value" style="font-size:1.1rem;">${{ "%.4f"|format(results|sum(attribute='cost')) }}</div>
+  </div>
+</div>
+
+<!-- Token results by language -->
+<div class="ts-card" style="margin-bottom:1.5rem;">
+  <div class="ts-card-header"><span class="ts-card-title">Input Tokens by Language</span></div>
+  {% set lang_groups = {} %}
+  {% for r in results %}
+    {% if r.language_name not in lang_groups %}
+      {% set _ = lang_groups.update({r.language_name: []}) %}
+    {% endif %}
+    {% set _ = lang_groups[r.language_name].append(r.input_tokens) %}
+  {% endfor %}
+  <div style="display:flex; flex-direction:column; gap:.6rem;">
+    {% set max_tokens = results|map(attribute='input_tokens')|max %}
+    {% for lang, tokens in lang_groups.items() %}
+    {% set avg = (tokens|sum / tokens|length)|int %}
+    <div style="display:flex; align-items:center; gap:.75rem;">
+      <span style="min-width:160px; font-size:.85rem;">{{ lang }}</span>
+      <div style="flex:1; height:8px; background:var(--ts-surface-2); border-radius:999px; overflow:hidden;">
+        <div style="height:100%; width:{{ (avg / max_tokens * 100)|int }}%; background:linear-gradient(90deg,var(--ts-accent),var(--ts-accent-2)); border-radius:999px;"></div>
+      </div>
+      <span style="min-width:60px; text-align:right; font-size:.82rem; font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ avg }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if pei_results %}
+<div class="ts-card">
+  <div class="ts-card-header"><span class="ts-card-title">PEI per Prompt</span></div>
+  <div style="display:flex; flex-direction:column; gap:.6rem;">
+    {% for p in pei_results %}
+    <div style="display:flex; align-items:center; gap:.75rem;">
+      <span style="min-width:200px; font-size:.8rem; font-family:var(--ts-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+        {{ p.base_text[:40] ~ '…' if p.base_text|length > 40 else p.base_text }}
+      </span>
+      <div class="ts-score-bar" style="flex:1;">
+        <div class="ts-score-bar-fill" data-value="{{ [1 - p.pei, 0]|max }}"
+             style="background:linear-gradient(90deg,var(--ts-accent-2),var(--ts-accent));"></div>
+      </div>
+      <span class="ts-score-value">{{ "%.4f"|format(p.pei) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% elif selected_run %}
+<div class="ts-empty"><div class="ts-empty-title">No results for this run</div></div>
+{% else %}
+<div class="ts-empty">
+  <div class="ts-empty-icon">📊</div>
+  <div class="ts-empty-title">Select a run to visualize scores</div>
+</div>
+{% endif %}
+{% endblock %}

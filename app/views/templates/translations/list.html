@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Translations — Prompt #{{ prompt.id }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Studies</a>
+<span class="sep">/</span>
+<a href="{{ url_for('study.detail_study', study_id=study.id) }}">{{ study.name }}</a>
+<span class="sep">/</span>
+<a href="{{ url_for('prompt.detail_prompt', prompt_id=prompt.id) }}">Prompt #{{ prompt.id }}</a>
+<span class="sep">/</span>
+<span class="current">Translations</span>
+{% endblock %}
+{% block topbar_actions %}
+<a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary">+ Add</a>
+<a href="{{ url_for('translation.compare_translations', prompt_id=prompt.id) }}" class="ts-btn ts-btn-secondary">Compare</a>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Translation Candidates</h1>
+    <p class="ts-page-subtitle">Prompt #{{ prompt.id }} — {{ study.name }}</p>
+  </div>
+</div>
+
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header"><span class="ts-card-title">Base Text</span></div>
+  <div class="ts-prompt-block">{{ prompt.base_text }}</div>
+</div>
+
+{% if candidates %}
+<div class="ts-card">
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr><th>Language</th><th>Writing System</th><th>v</th><th>Status</th><th>SFS</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+        <tr>
+          <td><strong>{{ c.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ c.language_code }})</span></td>
+          <td><span class="ts-badge ts-badge-info">{{ c.writing_system }}</span></td>
+          <td>{{ c.version }}</td>
+          <td><span class="ts-badge ts-badge-{{ c.status }}">{{ c.status }}</span></td>
+          <td>
+            {% if c.sfs is not none %}
+            <div class="ts-score-bar-wrap" style="min-width:140px;">
+              <div class="ts-score-bar"><div class="ts-score-bar-fill" data-value="{{ c.sfs }}"></div></div>
+              <span class="ts-score-value">{{ "%.4f"|format(c.sfs) }}</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            <div style="display:flex; gap:.3rem; flex-wrap:wrap;">
+              <form method="post" action="{{ url_for('translation.score_translation', candidate_id=c.id) }}">
+                <button class="ts-btn ts-btn-warning ts-btn-sm">Score SFS</button>
+              </form>
+              {% if c.status != 'approved' %}
+              <form method="post" action="{{ url_for('translation.approve_translation', candidate_id=c.id) }}">
+                <button class="ts-btn ts-btn-success ts-btn-sm">Approve</button>
+              </form>
+              {% endif %}
+              {% if c.status != 'rejected' %}
+              <form method="post" action="{{ url_for('translation.reject_translation', candidate_id=c.id) }}">
+                <button class="ts-btn ts-btn-danger ts-btn-sm">Reject</button>
+              </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('translation.delete_translation', candidate_id=c.id) }}"
+                    data-confirm="Delete this candidate?">
+                <button class="ts-btn ts-btn-danger ts-btn-sm">Del</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ts-empty">
+  <div class="ts-empty-title">No candidates yet</div>
+  <a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary" style="margin-top:.75rem;">Add Translation</a>
+</div>
+{% endif %}
+{% endblock %}

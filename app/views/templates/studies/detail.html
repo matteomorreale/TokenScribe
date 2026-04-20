@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}{{ study.name }}{% endblock %}
+
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Studies</a>
+<span class="sep">/</span>
+<span class="current">{{ study.name }}</span>
+{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('study.edit_study', study_id=study.id) }}" class="ts-btn ts-btn-secondary">Edit</a>
+<a href="{{ url_for('study.new_study') }}" class="ts-btn ts-btn-secondary">New Study</a>
+{% endblock %}
+
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">{{ study.name }}</h1>
+    {% if study.description %}
+    <p class="ts-page-subtitle">{{ study.description }}</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="ts-grid ts-grid-4" style="margin-bottom:1.75rem;">
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Prompts</div>
+    <div class="ts-stat-value">{{ prompts|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Experiment Runs</div>
+    <div class="ts-stat-value">{{ runs|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Created</div>
+    <div class="ts-stat-value" style="font-size:1rem;">{{ study.created_at[:10] }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Study ID</div>
+    <div class="ts-stat-value" style="font-size:1rem;">#{{ study.id }}</div>
+  </div>
+</div>
+
+<!-- Prompts Section -->
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Prompts</span>
+    <a href="{{ url_for('prompt.new_prompt', study_id=study.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">
+      + Add Prompt
+    </a>
+  </div>
+  {% if prompts %}
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Category</th>
+          <th>Base Text</th>
+          <th>Translations</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in prompts %}
+        <tr>
+          <td style="color:var(--ts-text-muted);">{{ p.id }}</td>
+          <td>
+            {% if p.category %}
+            <span class="ts-badge ts-badge-accent">{{ p.category }}</span>
+            {% else %}<span style="color:var(--ts-text-muted);">—</span>{% endif %}
+          </td>
+          <td style="max-width:400px; font-family:var(--ts-mono); font-size:0.8rem;">
+            {{ p.base_text[:100] ~ '…' if p.base_text|length > 100 else p.base_text }}
+          </td>
+          <td><span class="ts-badge ts-badge-info">{{ p.translation_count if p.translation_count is defined else '—' }}</span></td>
+          <td>
+            <div style="display:flex; gap:.4rem;">
+              <a href="{{ url_for('prompt.detail_prompt', prompt_id=p.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">View</a>
+              <a href="{{ url_for('translation.compare_translations', prompt_id=p.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">Compare</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ts-empty" style="padding:2rem;">
+    <div class="ts-empty-title">No prompts yet</div>
+    <div class="ts-empty-desc">Add base prompts to start building your multilingual dataset.</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Runs Section -->
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Experiment Runs</span>
+    <a href="{{ url_for('experiment.new_experiment', study_id=study.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">
+      + Run Experiment
+    </a>
+  </div>
+  {% if runs %}
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr><th>Run ID</th><th>Timestamp</th><th>Results</th><th>Notes</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td>#{{ r.id }}</td>
+          <td style="color:var(--ts-text-muted); font-size:0.8rem;">{{ r.timestamp }}</td>
+          <td><span class="ts-badge ts-badge-info">{{ r.result_count }}</span></td>
+          <td style="color:var(--ts-text-muted);">{{ r.notes or '—' }}</td>
+          <td>
+            <a href="{{ url_for('experiment.detail_experiment', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ts-empty" style="padding:2rem;">
+    <div class="ts-empty-title">No experiment runs yet</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Actions -->
+<div style="display:flex; gap:.75rem; flex-wrap:wrap;">
+  <a href="{{ url_for('prompt.list_prompts', study_id=study.id) }}" class="ts-btn ts-btn-secondary">Manage Prompts</a>
+  <a href="{{ url_for('report.study_report', study_id=study.id) }}" class="ts-btn ts-btn-secondary">View Report</a>
+  <form method="post" action="{{ url_for('study.delete_study', study_id=study.id) }}"
+        data-confirm="Delete study '{{ study.name }}'? All prompts and results will be lost.">
+    <button type="submit" class="ts-btn ts-btn-danger">Delete Study</button>
+  </form>
+</div>
+{% endblock %}

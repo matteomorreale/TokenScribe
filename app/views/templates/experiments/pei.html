@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}PEI — Run #{{ run.id }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('experiment.list_experiments') }}">Experiments</a>
+<span class="sep">/</span>
+<a href="{{ url_for('experiment.detail_experiment', run_id=run.id) }}">Run #{{ run.id }}</a>
+<span class="sep">/</span>
+<span class="current">PEI Results</span>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">PEI Results — Run #{{ run.id }}</h1>
+    <p class="ts-page-subtitle">Prompt Equivalence Index across approved translations</p>
+  </div>
+</div>
+
+<div class="ts-card" style="margin-bottom:1.25rem; padding:1rem 1.5rem; background:rgba(108,99,255,.06); border-color:rgba(108,99,255,.3);">
+  <p style="font-size:.85rem; color:var(--ts-text-muted);">
+    <strong style="color:var(--ts-text);">PEI</strong> is the mean coefficient of variation (CV) across character length, word count, and neutral token count.
+    Lower PEI = more structurally equivalent translations. Goal: minimize PEI.
+  </p>
+</div>
+
+{% if pei_results %}
+<div class="ts-card">
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr><th>Prompt</th><th>Category</th><th>CV Char Length</th><th>CV Word Count</th><th>CV Token Count</th><th>PEI</th></tr>
+      </thead>
+      <tbody>
+        {% for p in pei_results %}
+        <tr>
+          <td style="font-family:var(--ts-mono); font-size:.78rem; max-width:200px;">
+            {{ p.base_text[:60] ~ '…' if p.base_text|length > 60 else p.base_text }}
+          </td>
+          <td>{% if p.category %}<span class="ts-badge ts-badge-accent">{{ p.category }}</span>{% else %}—{% endif %}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_char_length) }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_word_count) }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_token_count) }}</td>
+          <td>
+            <div class="ts-score-bar-wrap" style="min-width:160px;">
+              <div class="ts-score-bar">
+                <div class="ts-score-bar-fill" data-value="{{ [1 - p.pei, 0]|max }}"
+                     style="background: linear-gradient(90deg, var(--ts-accent-2), var(--ts-accent));"></div>
+              </div>
+              <span class="ts-score-value">{{ "%.4f"|format(p.pei) }}</span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ts-empty">
+  <div class="ts-empty-title">No PEI results for this run</div>
+  <div class="ts-empty-desc">PEI is computed automatically when running experiments with ≥2 approved translations per prompt.</div>
+</div>
+{% endif %}
+{% endblock %}

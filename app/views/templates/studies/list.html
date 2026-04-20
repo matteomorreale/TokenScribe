@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Studies{% endblock %}
+
+{% block breadcrumb %}
+<span class="current">Studies</span>
+{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('study.new_study') }}" class="ts-btn ts-btn-primary">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+  New Study
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Studies</h1>
+    <p class="ts-page-subtitle">Manage your token efficiency research studies</p>
+  </div>
+</div>
+
+{% if studies %}
+<div class="ts-card">
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Prompts</th>
+          <th>Runs</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in studies %}
+        <tr>
+          <td>
+            <a href="{{ url_for('study.detail_study', study_id=s.id) }}" style="font-weight:600;">
+              {{ s.name }}
+            </a>
+          </td>
+          <td style="color:var(--ts-text-muted); max-width:300px;">
+            {{ s.description[:80] ~ '…' if s.description and s.description|length > 80 else s.description or '—' }}
+          </td>
+          <td>
+            <span class="ts-badge ts-badge-accent">{{ s.prompt_count }}</span>
+          </td>
+          <td>
+            <span class="ts-badge ts-badge-info">{{ s.run_count }}</span>
+          </td>
+          <td style="color:var(--ts-text-muted); font-size:0.8rem;">{{ s.created_at[:10] }}</td>
+          <td>
+            <div style="display:flex; gap:.4rem;">
+              <a href="{{ url_for('study.detail_study', study_id=s.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">View</a>
+              <a href="{{ url_for('study.edit_study', study_id=s.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">Edit</a>
+              <form method="post" action="{{ url_for('study.delete_study', study_id=s.id) }}"
+                    data-confirm="Delete study '{{ s.name }}'? This cannot be undone.">
+                <button type="submit" class="ts-btn ts-btn-danger ts-btn-sm">Delete</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ts-empty">
+  <div class="ts-empty-icon">📋</div>
+  <div class="ts-empty-title">No studies yet</div>
+  <div class="ts-empty-desc">Create your first study to start measuring token efficiency.</div>
+  <a href="{{ url_for('study.new_study') }}" class="ts-btn ts-btn-primary" style="margin-top:1rem;">Create Study</a>
+</div>
+{% endif %}
+{% endblock %}

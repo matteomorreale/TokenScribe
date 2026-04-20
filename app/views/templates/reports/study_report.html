@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Report — {{ study.name }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('report.reports_dashboard') }}">Reports</a>
+<span class="sep">/</span>
+<span class="current">{{ study.name }}</span>
+{% endblock %}
+{% block topbar_actions %}
+{% if runs %}
+<a href="{{ url_for('report.export_csv') }}?run_id={{ runs[0].id }}" class="ts-btn ts-btn-secondary">Export CSV</a>
+<a href="{{ url_for('report.export_json') }}?run_id={{ runs[0].id }}" class="ts-btn ts-btn-secondary">Export JSON</a>
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">{{ study.name }}</h1>
+    <p class="ts-page-subtitle">Study Report — {{ study.created_at[:10] }}</p>
+  </div>
+</div>
+
+<div class="ts-grid ts-grid-4" style="margin-bottom:1.75rem;">
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Prompts</div>
+    <div class="ts-stat-value">{{ prompts|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Experiment Runs</div>
+    <div class="ts-stat-value">{{ runs|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Total Results</div>
+    <div class="ts-stat-value">{{ results|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Total Cost</div>
+    <div class="ts-stat-value" style="font-size:1.1rem;">${{ "%.4f"|format(results|sum(attribute='cost')) if results else '0' }}</div>
+  </div>
+</div>
+
+{% if study.description %}
+<div class="ts-card" style="margin-bottom:1.25rem; padding:.875rem 1.5rem;">
+  <p style="color:var(--ts-text-muted); font-size:.9rem;">{{ study.description }}</p>
+</div>
+{% endif %}
+
+{% if results %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header"><span class="ts-card-title">Token Results Summary</span></div>
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr><th>Language</th><th>Writing System</th><th>Avg Input Tokens</th><th>Avg Output Tokens</th><th>Results</th></tr>
+      </thead>
+      <tbody>
+        {% set lang_data = {} %}
+        {% for r in results %}
+          {% if r.language_name not in lang_data %}
+            {% set _ = lang_data.update({r.language_name: {'ws': r.writing_system, 'in': [], 'out': []}}) %}
+          {% endif %}
+          {% set _ = lang_data[r.language_name]['in'].append(r.input_tokens) %}
+          {% set _ = lang_data[r.language_name]['out'].append(r.output_tokens) %}
+        {% endfor %}
+        {% for lang, d in lang_data.items() %}
+        <tr>
+          <td><strong>{{ lang }}</strong></td>
+          <td><span class="ts-badge ts-badge-info">{{ d.ws }}</span></td>
+          <td style="font-variant-numeric:tabular-nums;">{{ (d['in']|sum / d['in']|length)|int }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ (d['out']|sum / d['out']|length)|int }}</td>
+          <td>{{ d['in']|length }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="ts-card">
+  <div class="ts-card-header"><span class="ts-card-title">Experiment Runs</span></div>
+  {% if runs %}
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead><tr><th>Run ID</th><th>Timestamp</th><th>Results</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td>#{{ r.id }}</td>
+          <td style="color:var(--ts-text-muted); font-size:.8rem;">{{ r.timestamp }}</td>
+          <td><span class="ts-badge ts-badge-info">{{ r.result_count }}</span></td>
+          <td>
+            <div style="display:flex; gap:.4rem;">
+              <a href="{{ url_for('experiment.detail_experiment', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">View</a>
+              <a href="{{ url_for('report.export_csv') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">CSV</a>
+              <a href="{{ url_for('report.export_json') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">JSON</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No runs yet</div></div>
+  {% endif %}
+</div>
+{% endblock %}

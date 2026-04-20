@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run.id }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('experiment.list_experiments') }}">Experiments</a>
+<span class="sep">/</span>
+<span class="current">Run #{{ run.id }}</span>
+{% endblock %}
+{% block topbar_actions %}
+<a href="{{ url_for('report.export_csv') }}?run_id={{ run.id }}" class="ts-btn ts-btn-secondary">Export CSV</a>
+<a href="{{ url_for('report.export_json') }}?run_id={{ run.id }}" class="ts-btn ts-btn-secondary">Export JSON</a>
+<a href="{{ url_for('experiment.pei_results', run_id=run.id) }}" class="ts-btn ts-btn-secondary">PEI Results</a>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Experiment Run #{{ run.id }}</h1>
+    <p class="ts-page-subtitle">Study: {{ run.study_name }} &mdash; {{ run.timestamp }}</p>
+  </div>
+</div>
+
+<div class="ts-grid ts-grid-4" style="margin-bottom:1.75rem;">
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Total Results</div>
+    <div class="ts-stat-value">{{ results|length }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Total Input Tokens</div>
+    <div class="ts-stat-value">{{ results|sum(attribute='input_tokens') | int }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Total Output Tokens</div>
+    <div class="ts-stat-value">{{ results|sum(attribute='output_tokens') | int }}</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Estimated Cost</div>
+    <div class="ts-stat-value" style="font-size:1.2rem;">${{ "%.6f"|format(results|sum(attribute='cost')) }}</div>
+  </div>
+</div>
+
+{% if run.notes %}
+<div class="ts-card" style="margin-bottom:1.25rem; padding:.875rem 1.25rem;">
+  <span style="color:var(--ts-text-muted); font-size:.8rem;">Notes:</span> {{ run.notes }}
+</div>
+{% endif %}
+
+<div class="ts-card">
+  <div class="ts-card-header"><span class="ts-card-title">Token Results</span></div>
+  {% if results %}
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr>
+          <th>Prompt</th><th>Language</th><th>Writing System</th>
+          <th>Provider</th><th>Model</th>
+          <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th><th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr>
+          <td style="font-size:.78rem; color:var(--ts-text-muted);">#{{ r.prompt_id }}</td>
+          <td><strong>{{ r.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ r.language_code }})</span></td>
+          <td><span class="ts-badge ts-badge-info">{{ r.writing_system }}</span></td>
+          <td>{{ r.provider_name }}</td>
+          <td style="font-family:var(--ts-mono); font-size:.78rem;">{{ r.model_name }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ r.input_tokens }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ r.output_tokens }}</td>
+          <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(r.cost) }}</td>
+          <td><span class="ts-badge ts-badge-{{ 'approved' if r.source == 'api_reported' else 'pending' }}">{{ r.source }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No results recorded</div></div>
+  {% endif %}
+</div>
+{% endblock %}

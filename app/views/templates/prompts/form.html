@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit Prompt' if prompt else 'New Prompt' }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Studies</a>
+<span class="sep">/</span>
+<a href="{{ url_for('study.detail_study', study_id=study.id) }}">{{ study.name }}</a>
+<span class="sep">/</span>
+<span class="current">{{ 'Edit Prompt' if prompt else 'New Prompt' }}</span>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">{{ 'Edit Prompt' if prompt else 'New Prompt' }}</h1>
+    <p class="ts-page-subtitle">Study: {{ study.name }}</p>
+  </div>
+</div>
+
+<div class="ts-card" style="max-width:760px;">
+  <form method="post">
+    <div class="ts-form-group">
+      <label class="ts-label" for="category">Category</label>
+      <input class="ts-input" type="text" id="category" name="category"
+             value="{{ prompt.category if prompt else '' }}"
+             placeholder="e.g. instruction, summarization, translation…">
+    </div>
+    <div class="ts-form-group">
+      <label class="ts-label" for="base_text">
+        Base Prompt Text *
+        <button type="button" id="ts-insert-template" class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:.75rem; text-transform:none; letter-spacing:0;">
+          Insert Template
+        </button>
+      </label>
+      <textarea class="ts-textarea" id="base_text" name="base_text"
+                style="min-height:180px;"
+                placeholder="[Instruction]&#10;&lt;&lt;&lt;&#10;[Input]&#10;&gt;&gt;&gt;&#10;[Expected Output]"
+                required>{{ prompt.base_text if prompt else '' }}</textarea>
+      <div class="ts-input-hint">
+        Required structure: <code>[Instruction] &lt;&lt;&lt; [Input] &gt;&gt;&gt; [Expected Output]</code>.
+        Delimiters must remain unchanged across all languages.
+      </div>
+    </div>
+    <div style="display:flex; gap:.75rem; margin-top:1.5rem;">
+      <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
+        {{ 'Save Changes' if prompt else 'Create Prompt' }}
+      </button>
+      <a href="{{ url_for('study.detail_study', study_id=study.id) }}" class="ts-btn ts-btn-secondary ts-btn-lg">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

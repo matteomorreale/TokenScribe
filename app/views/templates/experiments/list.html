@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Experiments{% endblock %}
+{% block breadcrumb %}<span class="current">Experiments</span>{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Experiment Runs</h1>
+    <p class="ts-page-subtitle">All immutable experiment runs across studies</p>
+  </div>
+</div>
+{% if runs %}
+<div class="ts-card">
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr><th>Run ID</th><th>Study</th><th>Timestamp</th><th>Results</th><th>Notes</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td>#{{ r.id }}</td>
+          <td><a href="{{ url_for('study.detail_study', study_id=r.study_id) }}">{{ r.study_name }}</a></td>
+          <td style="color:var(--ts-text-muted); font-size:0.8rem;">{{ r.timestamp }}</td>
+          <td><span class="ts-badge ts-badge-info">{{ r.result_count }}</span></td>
+          <td style="color:var(--ts-text-muted);">{{ r.notes or '—' }}</td>
+          <td>
+            <div style="display:flex; gap:.4rem;">
+              <a href="{{ url_for('experiment.detail_experiment', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">View</a>
+              <a href="{{ url_for('experiment.pei_results', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">PEI</a>
+              <a href="{{ url_for('report.export_csv') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">CSV</a>
+              <a href="{{ url_for('report.export_json') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">JSON</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ts-empty">
+  <div class="ts-empty-icon">🧪</div>
+  <div class="ts-empty-title">No experiment runs yet</div>
+  <div class="ts-empty-desc">Go to a study and run an experiment to collect token data.</div>
+</div>
+{% endif %}
+{% endblock %}

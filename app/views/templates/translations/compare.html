@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Compare — Prompt #{{ prompt.id }}{% endblock %}
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Studies</a>
+<span class="sep">/</span>
+<a href="{{ url_for('study.detail_study', study_id=study.id) }}">{{ study.name }}</a>
+<span class="sep">/</span>
+<a href="{{ url_for('prompt.detail_prompt', prompt_id=prompt.id) }}">Prompt #{{ prompt.id }}</a>
+<span class="sep">/</span>
+<span class="current">Compare</span>
+{% endblock %}
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Side-by-Side Comparison</h1>
+    <p class="ts-page-subtitle">Prompt #{{ prompt.id }} — {{ study.name }}</p>
+  </div>
+</div>
+
+<!-- Base text -->
+<div class="ts-card" style="margin-bottom:1.5rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Base Text (Source)</span>
+    <span class="ts-badge ts-badge-accent">English</span>
+  </div>
+  <div class="ts-prompt-block">{{ prompt.base_text }}</div>
+</div>
+
+<!-- Approved translations grid -->
+{% if approved %}
+<h2 style="font-size:1rem; font-weight:600; color:var(--ts-text-muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:1rem;">
+  Approved Translations ({{ approved|length }})
+</h2>
+<div class="ts-compare-grid" style="margin-bottom:2rem;">
+  {% for t in approved %}
+  <div class="ts-compare-card">
+    <div>
+      <div class="ts-compare-lang">{{ t.language_name }}</div>
+      <div class="ts-compare-ws">{{ t.language_code }}</div>
+    </div>
+    {% if t.sfs is not none %}
+    <div class="ts-score-bar-wrap">
+      <div class="ts-score-bar"><div class="ts-score-bar-fill" data-value="{{ t.sfs }}"></div></div>
+      <span class="ts-score-value">SFS {{ "%.3f"|format(t.sfs) }}</span>
+    </div>
+    {% endif %}
+    <div class="ts-compare-text">{{ t.text }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="ts-empty" style="margin-bottom:2rem;">
+  <div class="ts-empty-title">No approved translations yet</div>
+  <div class="ts-empty-desc">Score and approve translation candidates to see them here.</div>
+</div>
+{% endif %}
+
+<!-- All candidates -->
+{% if candidates %}
+<h2 style="font-size:1rem; font-weight:600; color:var(--ts-text-muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:1rem;">
+  All Candidates ({{ candidates|length }})
+</h2>
+<div class="ts-card">
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr><th>Language</th><th>v</th><th>Status</th><th>SFS</th><th>DSF</th><th>RTF</th></tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+        <tr>
+          <td><strong>{{ c.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ c.language_code }})</span></td>
+          <td>{{ c.version }}</td>
+          <td><span class="ts-badge ts-badge-{{ c.status }}">{{ c.status }}</span></td>
+          <td>{% if c.sfs is not none %}{{ "%.4f"|format(c.sfs) }}{% else %}—{% endif %}</td>
+          <td>{% if c.dsf is not none %}{{ "%.4f"|format(c.dsf) }}{% else %}—{% endif %}</td>
+          <td>{% if c.rtf is not none %}{{ "%.4f"|format(c.rtf) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
