@@ -60,12 +60,14 @@ def detail_prompt(prompt_id: int):
     study = _sm().get_by_id(prompt["study_id"])
     candidates = _tm().get_candidates_by_prompt(prompt_id)
     approved = _tm().get_approved_by_prompt(prompt_id)
+    languages = _tm().get_all_languages()
     return render_template(
         "prompts/detail.html",
         prompt=prompt,
         study=study,
         candidates=candidates,
         approved=approved,
+        languages=languages,
     )
 
 

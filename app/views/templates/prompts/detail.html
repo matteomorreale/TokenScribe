@@ -27,6 +27,43 @@
   <div class="ts-prompt-block">{{ prompt.base_text }}</div>
 </div>
 
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">AI Translate (OpenAI gpt-5.4)</span>
+  </div>
+  <form method="post" action="{{ url_for('translation.ai_translate', prompt_id=prompt.id) }}">
+    <div class="ts-grid ts-grid-2" style="align-items:start;">
+      <div>
+        <label class="ts-label" for="language_ids">Lingue target</label>
+        <select id="language_ids" name="language_ids" class="ts-select" multiple size="10" required>
+          {% for l in languages %}
+            {% if l.code != 'en' %}
+              <option value="{{ l.id }}">{{ l.name }} ({{ l.code }}) — {{ l.writing_system }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <div class="ts-input-hint">Selezione multipla: ⌘/Ctrl + click</div>
+      </div>
+      <div>
+        <div class="ts-grid ts-grid-2">
+          <div class="ts-form-group" style="margin-bottom:0;">
+            <label class="ts-label" for="sfs_min">SFS min</label>
+            <input id="sfs_min" name="sfs_min" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.85" required>
+          </div>
+          <div class="ts-form-group" style="margin-bottom:0;">
+            <label class="ts-label" for="sfs_max">SFS max</label>
+            <input id="sfs_max" name="sfs_max" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.99" required>
+          </div>
+        </div>
+        <div class="ts-input-hint">Il sistema tenta più generazioni per rientrare nel range.</div>
+        <div style="display:flex; justify-content:flex-end; margin-top:1rem;">
+          <button class="ts-btn ts-btn-primary">Genera traduzioni</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+
 <div class="ts-card">
   <div class="ts-card-header">
     <span class="ts-card-title">Translation Candidates ({{ candidates|length }})</span>

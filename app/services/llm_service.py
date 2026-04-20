@@ -91,7 +91,7 @@ class LLMService:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
-                max_tokens=512,
+                max_completion_tokens=512,
             )
             usage = response.usage
             return TokenScribeCallResult(
