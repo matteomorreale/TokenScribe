@@ -82,16 +82,31 @@ class ExperimentModel:
         output_tokens: int,
         cost: float,
         source: str = "api_reported",
+        response_text: str = None,
+        visible_output_text_length: int = None,
+        api_reported_output_tokens: int = None,
+        token_accounting_mode: str = None,
     ) -> int:
         conn = self.db.get_connection()
         try:
+            if visible_output_text_length is None:
+                visible_output_text_length = len(response_text or "")
+            if token_accounting_mode is None:
+                token_accounting_mode = source
+            if api_reported_output_tokens is None and source == "api_reported":
+                api_reported_output_tokens = output_tokens
+
             cur = conn.execute(
                 """INSERT INTO token_results
                    (run_id, prompt_id, language_id, model_id,
-                    input_tokens, output_tokens, cost, source)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    input_tokens, output_tokens,
+                    visible_output_text_length, api_reported_output_tokens,
+                    cost, source, token_accounting_mode, response_text)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, prompt_id, language_id, model_id,
-                 input_tokens, output_tokens, cost, source),
+                 input_tokens, output_tokens,
+                 visible_output_text_length, api_reported_output_tokens,
+                 cost, source, token_accounting_mode, response_text),
             )
             conn.commit()
             return cur.lastrowid
@@ -102,9 +117,28 @@ class ExperimentModel:
         conn = self.db.get_connection()
         try:
             rows = conn.execute(
-                """SELECT tr.*,
+                """SELECT
+                          tr.id,
+                          tr.run_id,
+                          tr.prompt_id,
+                          tr.language_id,
+                          tr.model_id,
+                          tr.input_tokens,
+                          tr.output_tokens,
+                          COALESCE(tr.visible_output_text_length, LENGTH(COALESCE(tr.response_text, ''))) AS visible_output_text_length,
+                          COALESCE(
+                              tr.api_reported_output_tokens,
+                              CASE WHEN tr.source = 'api_reported' THEN tr.output_tokens ELSE NULL END
+                          ) AS api_reported_output_tokens,
+                          tr.cost,
+                          tr.source,
+                          COALESCE(tr.token_accounting_mode, tr.source) AS token_accounting_mode,
+                          tr.response_text,
+                          tr.created_at,
                           p.base_text, p.category,
                           l.name as language_name, l.code as language_code,
+                          l.script_group as script_group,
+                          l.morphology_group as morphology_group,
                           ws.name as writing_system,
                           m.name as model_name,
                           pr.name as provider_name
@@ -132,14 +166,28 @@ class ExperimentModel:
         cv_word: float,
         cv_token: float,
         pei: float,
+        script_group_count: int = None,
+        morphology_group_count: int = None,
+        pei_band: str = None,
     ) -> int:
         conn = self.db.get_connection()
         try:
             cur = conn.execute(
                 """INSERT INTO pei_results
-                   (run_id, prompt_id, cv_char_length, cv_word_count, cv_token_count, pei)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (run_id, prompt_id, cv_char, cv_word, cv_token, pei),
+                   (run_id, prompt_id, cv_char_length, cv_word_count, cv_token_count, pei,
+                    script_group_count, morphology_group_count, pei_band)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    prompt_id,
+                    cv_char,
+                    cv_word,
+                    cv_token,
+                    pei,
+                    script_group_count,
+                    morphology_group_count,
+                    pei_band,
+                ),
             )
             conn.commit()
             return cur.lastrowid
@@ -155,6 +203,66 @@ class ExperimentModel:
                    JOIN prompts p ON p.id = pr.prompt_id
                    WHERE pr.run_id=?
                    ORDER BY p.id""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def insert_pei_group_result(
+        self,
+        run_id: int,
+        prompt_id: int,
+        group_type: str,
+        group_value: str,
+        language_count: int,
+        cv_char: float,
+        cv_word: float,
+        cv_token: float,
+        pei: float,
+        pei_delta_vs_global: float,
+        baseline_pei: float,
+        pei_delta_vs_group: float,
+        pei_band: str,
+    ) -> int:
+        conn = self.db.get_connection()
+        try:
+            cur = conn.execute(
+                """INSERT INTO pei_group_results
+                   (run_id, prompt_id, group_type, group_value, language_count,
+                    cv_char_length, cv_word_count, cv_token_count, pei,
+                    pei_delta_vs_global, baseline_pei, pei_delta_vs_group, pei_band)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    prompt_id,
+                    group_type,
+                    group_value,
+                    language_count,
+                    cv_char,
+                    cv_word,
+                    cv_token,
+                    pei,
+                    pei_delta_vs_global,
+                    baseline_pei,
+                    pei_delta_vs_group,
+                    pei_band,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_pei_groups_by_run(self, run_id: int):
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT pgr.*, p.base_text, p.category
+                   FROM pei_group_results pgr
+                   JOIN prompts p ON p.id = pgr.prompt_id
+                   WHERE pgr.run_id=?
+                   ORDER BY p.id, pgr.group_type, pgr.group_value""",
                 (run_id,),
             ).fetchall()
             return [dict(r) for r in rows]

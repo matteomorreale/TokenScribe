@@ -65,8 +65,9 @@
     {% set avg = (tokens|sum / tokens|length)|int %}
     <div style="display:flex; align-items:center; gap:.75rem;">
       <span style="min-width:160px; font-size:.85rem;">{{ lang }}</span>
-      <div style="flex:1; height:8px; background:var(--ts-surface-2); border-radius:999px; overflow:hidden;">
-        <div style="height:100%; width:{{ (avg / max_tokens * 100)|int }}%; background:linear-gradient(90deg,var(--ts-accent),var(--ts-accent-2)); border-radius:999px;"></div>
+      <div class="ts-score-bar" style="flex:1; height:8px;">
+        <div class="ts-score-bar-fill" data-value="{{ (avg / max_tokens) if max_tokens else 0 }}"
+             style="height:100%; background:linear-gradient(90deg,var(--ts-accent),var(--ts-accent-2));"></div>
       </div>
       <span style="min-width:60px; text-align:right; font-size:.82rem; font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ avg }}</span>
     </div>
@@ -75,6 +76,13 @@
 </div>
 
 {% if pei_results %}
+{% set pgr_by_prompt = {} %}
+{% for g in pei_group_results or [] %}
+  {% if g.prompt_id not in pgr_by_prompt %}
+    {% set _ = pgr_by_prompt.update({g.prompt_id: []}) %}
+  {% endif %}
+  {% set _ = pgr_by_prompt[g.prompt_id].append(g) %}
+{% endfor %}
 <div class="ts-card">
   <div class="ts-card-header"><span class="ts-card-title">PEI per Prompt</span></div>
   <div style="display:flex; flex-direction:column; gap:.6rem;">
@@ -88,6 +96,35 @@
              style="background:linear-gradient(90deg,var(--ts-accent-2),var(--ts-accent));"></div>
       </div>
       <span class="ts-score-value">{{ "%.4f"|format(p.pei) }}</span>
+      {% if p.pei_band %}<span class="ts-badge ts-badge-secondary">{{ p.pei_band }}</span>{% endif %}
+      {% set groups = pgr_by_prompt.get(p.prompt_id) %}
+      {% if groups %}
+      <details class="ts-details">
+        <summary class="ts-btn ts-btn-secondary ts-btn-sm">Gruppi</summary>
+        <div class="ts-details-panel">
+          <div class="ts-table-wrap">
+            <table class="ts-table">
+              <thead>
+                <tr><th>Tipo</th><th>Gruppo</th><th>N</th><th>PEI</th><th>Baseline</th><th>Δ vs baseline</th><th>Δ vs globale</th></tr>
+              </thead>
+              <tbody>
+                {% for g in groups %}
+                <tr>
+                  <td><span class="ts-badge ts-badge-info">{{ g.group_type }}</span></td>
+                  <td>{{ g.group_value }}</td>
+                  <td style="font-variant-numeric:tabular-nums;">{{ g.language_count }}</td>
+                  <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei) }}</td>
+                  <td style="font-variant-numeric:tabular-nums;">{% if g.baseline_pei is not none %}{{ "%.4f"|format(g.baseline_pei) }}{% else %}—{% endif %}</td>
+                  <td style="font-variant-numeric:tabular-nums;">{% if g.pei_delta_vs_group is not none %}{{ "%.4f"|format(g.pei_delta_vs_group) }}{% else %}—{% endif %}</td>
+                  <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei_delta_vs_global) }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+      {% endif %}
     </div>
     {% endfor %}
   </div>

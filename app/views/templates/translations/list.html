@@ -27,15 +27,36 @@
 </div>
 
 {% if candidates %}
-<div class="ts-card">
+<div class="ts-card" data-ts-bulk-candidates="1">
+  <div class="ts-card-header" style="gap:.75rem; flex-wrap:wrap;">
+    <span class="ts-card-title">Candidates ({{ candidates|length }})</span>
+    <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-left:auto;">
+      <form method="post" action="{{ url_for('translation.bulk_approve_translations', prompt_id=prompt.id) }}" data-ts-bulk-action="approve">
+        <input type="hidden" name="candidate_ids" value="">
+        <button class="ts-btn ts-btn-success ts-btn-sm" type="submit">Approve selected</button>
+      </form>
+      <form method="post" action="{{ url_for('translation.bulk_reject_translations', prompt_id=prompt.id) }}" data-ts-bulk-action="reject">
+        <input type="hidden" name="candidate_ids" value="">
+        <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Reject selected</button>
+      </form>
+      <form method="post" action="{{ url_for('translation.bulk_delete_translations', prompt_id=prompt.id) }}" data-ts-bulk-action="delete" data-confirm="Delete selected candidates?">
+        <input type="hidden" name="candidate_ids" value="">
+        <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Delete selected</button>
+      </form>
+    </div>
+  </div>
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>
-        <tr><th>Language</th><th>Writing System</th><th>v</th><th>Status</th><th>SFS</th><th>Actions</th></tr>
+        <tr>
+          <th style="width:36px;"><input type="checkbox" data-ts-select-all aria-label="Select all"></th>
+          <th>Language</th><th>Writing System</th><th>v</th><th>Status</th><th>SFS</th><th>Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% for c in candidates %}
         <tr>
+          <td><input type="checkbox" data-ts-candidate-id="{{ c.id }}" aria-label="Select {{ c.language_name }}"></td>
           <td><strong>{{ c.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ c.language_code }})</span></td>
           <td><span class="ts-badge ts-badge-info">{{ c.writing_system }}</span></td>
           <td>{{ c.version }}</td>

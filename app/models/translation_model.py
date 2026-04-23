@@ -18,6 +18,8 @@ class TranslationModel:
             rows = conn.execute(
                 """SELECT tc.*, l.name as language_name, l.code as language_code,
                           ws.name as writing_system,
+                          l.script_group as script_group,
+                          l.morphology_group as morphology_group,
                           ts.dsf, ts.rtf, ts.sfs
                    FROM translation_candidates tc
                    JOIN languages l ON l.id = tc.language_id
@@ -36,7 +38,9 @@ class TranslationModel:
         try:
             row = conn.execute(
                 """SELECT tc.*, l.name as language_name, l.code as language_code,
-                          ws.name as writing_system
+                          ws.name as writing_system,
+                          l.script_group as script_group,
+                          l.morphology_group as morphology_group
                    FROM translation_candidates tc
                    JOIN languages l ON l.id = tc.language_id
                    JOIN writing_systems ws ON ws.id = l.writing_system_id
@@ -144,9 +148,13 @@ class TranslationModel:
         try:
             rows = conn.execute(
                 """SELECT at.*, l.name as language_name, l.code as language_code,
+                          ws.name as writing_system,
+                          l.script_group as script_group,
+                          l.morphology_group as morphology_group,
                           tc.text, ts.sfs
                    FROM approved_translations at
                    JOIN languages l ON l.id = at.language_id
+                   JOIN writing_systems ws ON ws.id = l.writing_system_id
                    JOIN translation_candidates tc ON tc.id = at.candidate_id
                    LEFT JOIN translation_scores ts ON ts.candidate_id = at.candidate_id
                    WHERE at.prompt_id=?

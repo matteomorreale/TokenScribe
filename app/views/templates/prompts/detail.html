@@ -35,27 +35,41 @@
     <div class="ts-grid ts-grid-2" style="align-items:start;">
       <div>
         <label class="ts-label" for="language_ids">Lingue target</label>
+        <div style="display:flex; flex-wrap:wrap; gap:.4rem; margin:.35rem 0 .6rem 0;">
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Alphabetic">Alphabetic</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Abjad">Abjad</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Abugida">Abugida</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Logographic">Logographic</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Syllabic">Syllabic</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Featural">Featural</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Mixed">Mixed</button>
+        </div>
         <select id="language_ids" name="language_ids" class="ts-select" multiple size="10" required>
           {% for l in languages %}
             {% if l.code != 'en' %}
-              <option value="{{ l.id }}">{{ l.name }} ({{ l.code }}) — {{ l.writing_system }}</option>
+              <option value="{{ l.id }}"
+                      data-writing-system="{{ l.writing_system }}"
+                      data-script-group="{{ l.script_group or '' }}"
+                      data-morphology-group="{{ l.morphology_group or '' }}">{{ l.name }} ({{ l.code }}) — {{ l.writing_system }}</option>
             {% endif %}
           {% endfor %}
         </select>
         <div class="ts-input-hint">Selezione multipla: ⌘/Ctrl + click</div>
       </div>
       <div>
-        <div class="ts-grid ts-grid-2">
-          <div class="ts-form-group" style="margin-bottom:0;">
-            <label class="ts-label" for="sfs_min">SFS min</label>
-            <input id="sfs_min" name="sfs_min" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.85" required>
-          </div>
-          <div class="ts-form-group" style="margin-bottom:0;">
-            <label class="ts-label" for="sfs_max">SFS max</label>
-            <input id="sfs_max" name="sfs_max" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.99" required>
-          </div>
+        <div class="ts-form-group" style="margin-bottom:0;">
+          <label class="ts-label" for="sfs_min">SFS minimo</label>
+          <input id="sfs_min" name="sfs_min" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.92" required>
         </div>
-        <div class="ts-input-hint">Il sistema tenta più generazioni per rientrare nel range.</div>
+        <div class="ts-form-group" style="margin-top:.65rem; margin-bottom:0;">
+          <label class="ts-label" for="pei_profile">Profilo PEI (set del prompt)</label>
+          <select id="pei_profile" name="pei_profile" class="ts-select" required>
+            <option value="homogeneous" selected>Omogeneo — PEI &lt; 0.20 ottimo</option>
+            <option value="moderate">Moderatamente eterogeneo — PEI 0.20–0.35 plausibile</option>
+            <option value="cross_script">Cross-script — PEI &gt; 0.35 possibile (non auto-invalido)</option>
+          </select>
+        </div>
+        <div class="ts-input-hint">SFS è per singola traduzione; PEI è per l’intero set multilingua. Range: &lt;0.20 ottimo, 0.20–0.35 plausibile, &gt;0.35 alto (accettabile se cross-script).</div>
         <div style="display:flex; justify-content:flex-end; margin-top:1rem;">
           <button class="ts-btn ts-btn-primary">Genera traduzioni</button>
         </div>
@@ -64,20 +78,125 @@
   </form>
 </div>
 
-<div class="ts-card">
+<div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header">
+    <span class="ts-card-title">PEI (Prompt Equivalence Index)</span>
+    <span class="ts-badge ts-badge-info">{{ pei_count }} traduzioni incluse</span>
+    <span class="ts-badge ts-badge-secondary">{{ pei_band }}</span>
+  </div>
+  <div class="ts-grid ts-grid-4">
+    <div class="ts-stat-card">
+      <div class="ts-stat-label">PEI</div>
+      <div class="ts-stat-value">{{ "%.4f"|format(pei.pei) }}</div>
+      <div class="ts-stat-sub">più basso = più bilanciate</div>
+    </div>
+    <div class="ts-stat-card">
+      <div class="ts-stat-label">CV caratteri</div>
+      <div class="ts-stat-value">{{ "%.4f"|format(pei.cv_char_length) }}</div>
+      <div class="ts-stat-sub">std / mean</div>
+    </div>
+    <div class="ts-stat-card">
+      <div class="ts-stat-label">CV parole</div>
+      <div class="ts-stat-value">{{ "%.4f"|format(pei.cv_word_count) }}</div>
+      <div class="ts-stat-sub">std / mean</div>
+    </div>
+    <div class="ts-stat-card">
+      <div class="ts-stat-label">CV token</div>
+      <div class="ts-stat-value">{{ "%.4f"|format(pei.cv_token_count) }}</div>
+      <div class="ts-stat-sub">tokenizer neutro</div>
+    </div>
+  </div>
+</div>
+
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">PEI per sottogruppi</span>
+  </div>
+  <div class="ts-grid ts-grid-2">
+    <div>
+      <div class="ts-stat-label" style="margin-bottom:.45rem;">Script group</div>
+      {% if pei_script_groups %}
+      <div class="ts-table-wrap">
+        <table class="ts-table">
+          <thead>
+            <tr><th>Gruppo</th><th>PEI</th><th>Band</th></tr>
+          </thead>
+          <tbody>
+            {% for g, v in pei_script_groups.items() %}
+            <tr>
+              <td><span class="ts-badge ts-badge-info">{{ g }}</span></td>
+              <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(v.pei) }}</td>
+              <td><span class="ts-badge ts-badge-secondary">{{ v.pei_band }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="ts-input-hint">Servono ≥2 lingue nello stesso gruppo per calcolare il PEI di sottogruppo.</div>
+      {% endif %}
+    </div>
+    <div>
+      <div class="ts-stat-label" style="margin-bottom:.45rem;">Morphology group</div>
+      {% if pei_morph_groups %}
+      <div class="ts-table-wrap">
+        <table class="ts-table">
+          <thead>
+            <tr><th>Gruppo</th><th>PEI</th><th>Band</th></tr>
+          </thead>
+          <tbody>
+            {% for g, v in pei_morph_groups.items() %}
+            <tr>
+              <td><span class="ts-badge ts-badge-info">{{ g }}</span></td>
+              <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(v.pei) }}</td>
+              <td><span class="ts-badge ts-badge-secondary">{{ v.pei_band }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="ts-input-hint">Assegna morphology_group alle lingue per abilitare questi sottogruppi.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="ts-card" data-ts-bulk-candidates="1">
+  <div class="ts-card-header" style="gap:.75rem; flex-wrap:wrap;">
     <span class="ts-card-title">Translation Candidates ({{ candidates|length }})</span>
-    <a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">+ Add</a>
+    <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-left:auto;">
+      <form method="post" action="{{ url_for('translation.bulk_approve_translations', prompt_id=prompt.id) }}" data-ts-bulk-action="approve">
+        <input type="hidden" name="candidate_ids" value="">
+        <input type="hidden" name="next" value="prompt">
+        <button class="ts-btn ts-btn-success ts-btn-sm" type="submit">Approve selected</button>
+      </form>
+      <form method="post" action="{{ url_for('translation.bulk_reject_translations', prompt_id=prompt.id) }}" data-ts-bulk-action="reject">
+        <input type="hidden" name="candidate_ids" value="">
+        <input type="hidden" name="next" value="prompt">
+        <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Reject selected</button>
+      </form>
+      <form method="post" action="{{ url_for('translation.bulk_delete_translations', prompt_id=prompt.id) }}" data-ts-bulk-action="delete" data-confirm="Delete selected translation candidates?">
+        <input type="hidden" name="candidate_ids" value="">
+        <input type="hidden" name="next" value="prompt">
+        <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Delete selected</button>
+      </form>
+      <a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">+ Add</a>
+    </div>
   </div>
   {% if candidates %}
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>
-        <tr><th>Language</th><th>Writing System</th><th>Version</th><th>Status</th><th>SFS</th><th>DSF</th><th>RTF</th><th>Actions</th></tr>
+        <tr>
+          <th style="width:36px;"><input type="checkbox" data-ts-select-all aria-label="Select all"></th>
+          <th>Language</th><th>Writing System</th><th>Version</th><th>Status</th><th>SFS</th><th>DSF</th><th>RTF</th><th>Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% for c in candidates %}
         <tr>
+          <td><input type="checkbox" data-ts-candidate-id="{{ c.id }}" aria-label="Select {{ c.language_name }}"></td>
           <td><strong>{{ c.language_name }}</strong> <span style="color:var(--ts-text-muted); font-size:0.78rem;">({{ c.language_code }})</span></td>
           <td><span class="ts-badge ts-badge-info">{{ c.writing_system }}</span></td>
           <td>v{{ c.version }}</td>
@@ -94,6 +213,85 @@
           <td>{% if c.rtf is not none %}{{ "%.4f"|format(c.rtf) }}{% else %}—{% endif %}</td>
           <td>
             <div style="display:flex; gap:.3rem; flex-wrap:wrap;">
+              <details class="ts-details">
+                <summary class="ts-btn ts-btn-secondary ts-btn-sm">Details</summary>
+                <div class="ts-details-panel">
+                  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:.6rem 1rem;">
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Caratteri</div>
+                      <div style="font-variant-numeric: tabular-nums;">{{ c.char_length }}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Parole</div>
+                      <div style="font-variant-numeric: tabular-nums;">{{ c.word_count }}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Token neutri</div>
+                      <div style="font-variant-numeric: tabular-nums;">{{ c.token_count }}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Script group</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.script_group %}{{ c.script_group }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Morphology group</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.morphology_group %}{{ c.morphology_group }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">SFS</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.sfs is not none %}{{ "%.4f"|format(c.sfs) }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div style="grid-column: 1 / -1; height:1px; background: rgba(46, 51, 80, 0.7); margin:.2rem 0;"></div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">PEI (set)</div>
+                      <div style="font-variant-numeric: tabular-nums;">{{ "%.4f"|format(pei.pei) }}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">PEI con questa</div>
+                      <div style="font-variant-numeric: tabular-nums;">
+                        {% if c.pei_with_candidate is not none %}{{ "%.4f"|format(c.pei_with_candidate) }}{% else %}—{% endif %}
+                        {% if c.pei_delta is not none %}
+                          <span style="color: var(--ts-text-muted); font-size:.78rem;">(Δ {{ "%.4f"|format(c.pei_delta) }})</span>
+                        {% endif %}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Δ PEI (script group)</div>
+                      <div style="font-variant-numeric: tabular-nums;">
+                        {% if c.pei_script_group_with_candidate is not none %}
+                          {{ "%.4f"|format(c.pei_script_group_with_candidate) }}
+                          <span style="color: var(--ts-text-muted); font-size:.78rem;">(Δ {{ "%.4f"|format(c.pei_script_group_delta) }}, {{ c.pei_script_group_band }})</span>
+                        {% else %}—{% endif %}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">Δ PEI (morph group)</div>
+                      <div style="font-variant-numeric: tabular-nums;">
+                        {% if c.pei_morphology_group_with_candidate is not none %}
+                          {{ "%.4f"|format(c.pei_morphology_group_with_candidate) }}
+                          <span style="color: var(--ts-text-muted); font-size:.78rem;">(Δ {{ "%.4f"|format(c.pei_morphology_group_delta) }}, {{ c.pei_morphology_group_band }})</span>
+                        {% else %}—{% endif %}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV char (con questa)</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.pei_with_cv_char_length is not none %}{{ "%.4f"|format(c.pei_with_cv_char_length) }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV words (con questa)</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.pei_with_cv_word_count is not none %}{{ "%.4f"|format(c.pei_with_cv_word_count) }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV tokens (con questa)</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.pei_with_cv_token_count is not none %}{{ "%.4f"|format(c.pei_with_cv_token_count) }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">PEI note</div>
+                      <div style="color: var(--ts-text-muted); font-size:.82rem;">CV = std/mean; PEI = media dei CV</div>
+                    </div>
+                  </div>
+                </div>
+              </details>
               <form method="post" action="{{ url_for('translation.score_translation', candidate_id=c.id) }}">
                 <button class="ts-btn ts-btn-warning ts-btn-sm">Score</button>
               </form>

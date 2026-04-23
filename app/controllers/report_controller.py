@@ -39,7 +39,9 @@ def export_csv():
         flash("Specify a run_id to export.", "error")
         return redirect(url_for("report.reports_dashboard"))
     results = _em().get_results_by_run(run_id)
-    csv_data = ExportService.to_csv(results)
+    pei = _em().get_pei_by_run(run_id)
+    pei_groups = _em().get_pei_groups_by_run(run_id)
+    csv_data = ExportService.to_csv(results, pei, pei_groups)
     return Response(
         csv_data,
         mimetype="text/csv",
@@ -55,7 +57,8 @@ def export_json():
         return redirect(url_for("report.reports_dashboard"))
     results = _em().get_results_by_run(run_id)
     pei = _em().get_pei_by_run(run_id)
-    json_data = ExportService.to_json(results, pei)
+    pei_groups = _em().get_pei_groups_by_run(run_id)
+    json_data = ExportService.to_json(results, pei, pei_groups)
     return Response(
         json_data,
         mimetype="application/json",
@@ -69,17 +72,20 @@ def scores_view():
     runs = _em().get_all_runs()
     results = []
     pei_results = []
+    pei_group_results = []
     selected_run = None
     if run_id:
         selected_run = _em().get_run_by_id(run_id)
         results = _em().get_results_by_run(run_id)
         pei_results = _em().get_pei_by_run(run_id)
+        pei_group_results = _em().get_pei_groups_by_run(run_id)
     return render_template(
         "reports/scores.html",
         runs=runs,
         selected_run=selected_run,
         results=results,
         pei_results=pei_results,
+        pei_group_results=pei_group_results,
     )
 
 

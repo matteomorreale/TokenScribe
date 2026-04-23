@@ -53,6 +53,7 @@
           <th>Prompt</th><th>Language</th><th>Writing System</th>
           <th>Provider</th><th>Model</th>
           <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th><th>Source</th>
+          <th>AI Response</th>
         </tr>
       </thead>
       <tbody>
@@ -67,6 +68,20 @@
           <td style="font-variant-numeric:tabular-nums;">{{ r.output_tokens }}</td>
           <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(r.cost) }}</td>
           <td><span class="ts-badge ts-badge-{{ 'approved' if r.source == 'api_reported' else 'pending' }}">{{ r.source }}</span></td>
+          <td>
+            <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="showResponseModal('{{ r.id }}')">View</button>
+            <template id="response-{{ r.id }}">{{ r.response_text | default('N/A') }}</template>
+            <template
+              id="response-meta-{{ r.id }}"
+              data-provider="{{ r.provider_name | default('') }}"
+              data-model="{{ r.model_name | default('') }}"
+              data-source="{{ r.source | default('') }}"
+              data-output-tokens="{{ r.output_tokens | default('') }}"
+              data-api-reported-output-tokens="{{ r.api_reported_output_tokens | default('') }}"
+              data-visible-output-text-length="{{ r.visible_output_text_length | default('') }}"
+              data-token-accounting-mode="{{ r.token_accounting_mode | default('') }}"
+            ></template>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -76,4 +91,64 @@
   <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No results recorded</div></div>
   {% endif %}
 </div>
+
+<!-- Modal for AI Response -->
+<div id="ai-response-modal" class="ts-modal">
+  <div class="ts-modal-content" style="max-width: 800px; width: 90%;">
+    <div class="ts-modal-header">
+      <div>
+        <h2 class="ts-modal-title">AI Response</h2>
+        <div id="ai-response-meta" style="margin-top:.25rem; font-size:.8rem; color:var(--ts-text-muted);"></div>
+      </div>
+      <button class="ts-modal-close" onclick="closeResponseModal()">&times;</button>
+    </div>
+    <div class="ts-modal-body">
+      <pre id="ai-response-text" class="ts-prompt-block" style="max-height: 500px; overflow-y: auto; white-space: pre-wrap;"></pre>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  function showResponseModal(id) {
+    const template = document.getElementById(`response-${id}`);
+    const metaTemplate = document.getElementById(`response-meta-${id}`);
+    const modal = document.getElementById('ai-response-modal');
+    const textContainer = document.getElementById('ai-response-text');
+    const metaContainer = document.getElementById('ai-response-meta');
+    
+    if (template && modal && textContainer && metaContainer) {
+      textContainer.textContent = template.innerHTML;
+
+      const d = metaTemplate ? metaTemplate.dataset : {};
+      const provider = d.provider || 'N/A';
+      const model = d.model || 'N/A';
+      const source = d.source || 'N/A';
+      const tokenMode = d.tokenAccountingMode || 'N/A';
+      const outputTokens = d.outputTokens || 'N/A';
+      const apiOutputTokens = d.apiReportedOutputTokens || 'N/A';
+      const visibleLen = d.visibleOutputTextLength || 'N/A';
+
+      metaContainer.textContent = `${provider} / ${model} • source: ${source} • token_mode: ${tokenMode} • output_tokens: ${outputTokens} • api_output_tokens: ${apiOutputTokens} • visible_len: ${visibleLen}`;
+      modal.classList.add('active');
+    }
+  }
+
+  function closeResponseModal() {
+    const modal = document.getElementById('ai-response-modal');
+    if (modal) {
+      modal.classList.remove('active');
+    }
+  }
+
+  // Close on outside click
+  window.addEventListener('click', (e) => {
+    const modal = document.getElementById('ai-response-modal');
+    if (e.target === modal) {
+      closeResponseModal();
+    }
+  });
+</script>
 {% endblock %}

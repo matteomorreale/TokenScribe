@@ -23,17 +23,53 @@
 </div>
 
 {% if pei_results %}
+{% set pgr_by_prompt = {} %}
+{% for g in pei_group_results or [] %}
+  {% if g.prompt_id not in pgr_by_prompt %}
+    {% set _ = pgr_by_prompt.update({g.prompt_id: []}) %}
+  {% endif %}
+  {% set _ = pgr_by_prompt[g.prompt_id].append(g) %}
+{% endfor %}
 <div class="ts-card">
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>
-        <tr><th>Prompt</th><th>Category</th><th>CV Char Length</th><th>CV Word Count</th><th>CV Token Count</th><th>PEI</th></tr>
+        <tr><th>Prompt</th><th>Category</th><th>CV Char Length</th><th>CV Word Count</th><th>CV Token Count</th><th>PEI</th><th>Band</th><th>Script</th><th>Morph</th></tr>
       </thead>
       <tbody>
         {% for p in pei_results %}
         <tr>
           <td style="font-family:var(--ts-mono); font-size:.78rem; max-width:200px;">
             {{ p.base_text[:60] ~ '…' if p.base_text|length > 60 else p.base_text }}
+            {% set groups = pgr_by_prompt.get(p.prompt_id) %}
+            {% if groups %}
+            <details class="ts-details" style="margin-top:.35rem;">
+              <summary class="ts-btn ts-btn-secondary ts-btn-sm">Sottogruppi</summary>
+              <div class="ts-details-panel">
+                <div class="ts-table-wrap">
+                  <table class="ts-table">
+                    <thead>
+                      <tr><th>Tipo</th><th>Gruppo</th><th>N</th><th>PEI</th><th>Baseline</th><th>Δ vs baseline</th><th>Δ vs globale</th><th>Band</th></tr>
+                    </thead>
+                    <tbody>
+                      {% for g in groups %}
+                      <tr>
+                        <td><span class="ts-badge ts-badge-info">{{ g.group_type }}</span></td>
+                        <td>{{ g.group_value }}</td>
+                        <td style="font-variant-numeric:tabular-nums;">{{ g.language_count }}</td>
+                        <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei) }}</td>
+                        <td style="font-variant-numeric:tabular-nums;">{% if g.baseline_pei is not none %}{{ "%.4f"|format(g.baseline_pei) }}{% else %}—{% endif %}</td>
+                        <td style="font-variant-numeric:tabular-nums;">{% if g.pei_delta_vs_group is not none %}{{ "%.4f"|format(g.pei_delta_vs_group) }}{% else %}—{% endif %}</td>
+                        <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei_delta_vs_global) }}</td>
+                        <td><span class="ts-badge ts-badge-secondary">{{ g.pei_band }}</span></td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+            {% endif %}
           </td>
           <td>{% if p.category %}<span class="ts-badge ts-badge-accent">{{ p.category }}</span>{% else %}—{% endif %}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_char_length) }}</td>
@@ -48,6 +84,9 @@
               <span class="ts-score-value">{{ "%.4f"|format(p.pei) }}</span>
             </div>
           </td>
+          <td>{% if p.pei_band %}<span class="ts-badge ts-badge-secondary">{{ p.pei_band }}</span>{% else %}—{% endif %}</td>
+          <td style="font-variant-numeric:tabular-nums;">{% if p.script_group_count is not none %}{{ p.script_group_count }}{% else %}—{% endif %}</td>
+          <td style="font-variant-numeric:tabular-nums;">{% if p.morphology_group_count is not none %}{{ p.morphology_group_count }}{% else %}—{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

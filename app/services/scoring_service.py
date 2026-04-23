@@ -117,6 +117,14 @@ class ScoringService:
             return len(text.split())
         return len(enc.encode(text))
 
+    def compute_structural_metrics(self, text: str) -> dict:
+        text = text or ""
+        return {
+            "char_length": len(text),
+            "word_count": len(text.split()),
+            "token_count": self._count_tiktoken(text),
+        }
+
     def compute_pei(self, texts: List[str]) -> dict:
         """
         Compute PEI across a list of structurally equivalent texts (one per language).
@@ -141,3 +149,12 @@ class ScoringService:
             "cv_token_count": cv_tok,
             "pei": pei,
         }
+
+    @staticmethod
+    def pei_band(pei: float) -> str:
+        v = float(pei or 0.0)
+        if v < 0.20:
+            return "ottimo"
+        if v <= 0.35:
+            return "plausibile"
+        return "alto"

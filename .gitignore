@@ -37,6 +37,7 @@ agents/log_history/
 .env.*
 .envrc
 
+.history
 .history/
 .idea/
 .vscode/

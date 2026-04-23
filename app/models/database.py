@@ -39,12 +39,60 @@ class DatabaseManager:
         conn = self.get_connection()
         try:
             self._create_tables(conn)
+            self._migrate_schema(conn)
             self._seed_writing_systems(conn)
             self._seed_languages(conn)
             self._seed_providers(conn)
             conn.commit()
         finally:
             conn.close()
+
+    def _migrate_schema(self, conn: sqlite3.Connection):
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "response_text" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN response_text TEXT")
+            if "visible_output_text_length" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN visible_output_text_length INTEGER")
+            if "api_reported_output_tokens" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN api_reported_output_tokens INTEGER")
+            if "token_accounting_mode" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN token_accounting_mode TEXT")
+        except sqlite3.Error:
+            pass
+
+        try:
+            cur = conn.execute("PRAGMA table_info(languages)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "script_group" not in columns:
+                conn.execute("ALTER TABLE languages ADD COLUMN script_group TEXT")
+            if "morphology_group" not in columns:
+                conn.execute("ALTER TABLE languages ADD COLUMN morphology_group TEXT")
+        except sqlite3.Error:
+            pass
+
+        try:
+            cur = conn.execute("PRAGMA table_info(pei_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "script_group_count" not in columns:
+                conn.execute("ALTER TABLE pei_results ADD COLUMN script_group_count INTEGER")
+            if "morphology_group_count" not in columns:
+                conn.execute("ALTER TABLE pei_results ADD COLUMN morphology_group_count INTEGER")
+            if "pei_band" not in columns:
+                conn.execute("ALTER TABLE pei_results ADD COLUMN pei_band TEXT")
+        except sqlite3.Error:
+            pass
+
+        try:
+            cur = conn.execute("PRAGMA table_info(pei_group_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "baseline_pei" not in columns:
+                conn.execute("ALTER TABLE pei_group_results ADD COLUMN baseline_pei REAL")
+            if "pei_delta_vs_group" not in columns:
+                conn.execute("ALTER TABLE pei_group_results ADD COLUMN pei_delta_vs_group REAL")
+        except sqlite3.Error:
+            pass
 
     def _create_tables(self, conn: sqlite3.Connection):
         conn.executescript("""
@@ -57,7 +105,9 @@ class DatabaseManager:
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 name              TEXT NOT NULL,
                 code              TEXT NOT NULL UNIQUE,
-                writing_system_id INTEGER NOT NULL REFERENCES writing_systems(id)
+                writing_system_id INTEGER NOT NULL REFERENCES writing_systems(id),
+                script_group      TEXT,
+                morphology_group  TEXT
             );
 
             CREATE TABLE IF NOT EXISTS studies (
@@ -135,8 +185,12 @@ class DatabaseManager:
                 model_id      INTEGER NOT NULL REFERENCES models(id),
                 input_tokens  INTEGER NOT NULL DEFAULT 0,
                 output_tokens INTEGER NOT NULL DEFAULT 0,
+                visible_output_text_length INTEGER,
+                api_reported_output_tokens INTEGER,
                 cost          REAL NOT NULL DEFAULT 0.0,
                 source        TEXT NOT NULL DEFAULT 'api_reported' CHECK(source IN ('api_reported','estimated')),
+                token_accounting_mode TEXT,
+                response_text TEXT,
                 created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
 
@@ -148,7 +202,28 @@ class DatabaseManager:
                 cv_word_count   REAL,
                 cv_token_count  REAL,
                 pei             REAL,
+                script_group_count INTEGER,
+                morphology_group_count INTEGER,
+                pei_band         TEXT,
                 computed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS pei_group_results (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id             INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                prompt_id          INTEGER NOT NULL REFERENCES prompts(id),
+                group_type         TEXT NOT NULL,
+                group_value        TEXT NOT NULL,
+                language_count     INTEGER NOT NULL DEFAULT 0,
+                cv_char_length     REAL,
+                cv_word_count      REAL,
+                cv_token_count     REAL,
+                pei                REAL,
+                pei_delta_vs_global REAL,
+                baseline_pei        REAL,
+                pei_delta_vs_group  REAL,
+                pei_band           TEXT,
+                computed_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
 
             CREATE TABLE IF NOT EXISTS settings (
@@ -177,6 +252,32 @@ class DatabaseManager:
                     "INSERT OR IGNORE INTO languages (name, code, writing_system_id) VALUES (?, ?, ?)",
                     (name, code, row["id"]),
                 )
+
+        rows = conn.execute(
+            """SELECT l.id, l.code, l.script_group, l.morphology_group, ws.name as writing_system
+               FROM languages l
+               JOIN writing_systems ws ON ws.id = l.writing_system_id"""
+        ).fetchall()
+
+        for r in rows:
+            script_group = r["script_group"]
+            if not script_group:
+                ws = (r["writing_system"] or "").strip().lower()
+                if ws in {"logographic", "mixed"}:
+                    script_group = "logographic_mixed"
+                else:
+                    script_group = "alphabetic"
+
+            morphology_group = r["morphology_group"]
+            if not morphology_group:
+                code = (r["code"] or "").strip().lower()
+                if code in {"tr", "ja", "ko"}:
+                    morphology_group = "agglutinative"
+
+            conn.execute(
+                "UPDATE languages SET script_group=?, morphology_group=? WHERE id=?",
+                (script_group, morphology_group, r["id"]),
+            )
 
     def _seed_providers(self, conn: sqlite3.Connection):
         from config import TokenScribeConfig

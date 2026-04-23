@@ -30,6 +30,51 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  document.querySelectorAll("[data-ts-bulk-candidates='1']").forEach((card) => {
+    const selectAll = card.querySelector("[data-ts-select-all]");
+    const rowChecks = Array.from(
+      card.querySelectorAll("input[type='checkbox'][data-ts-candidate-id]"),
+    );
+    const bulkForms = Array.from(card.querySelectorAll("form[data-ts-bulk-action]"));
+
+    const updateState = () => {
+      const selected = rowChecks.filter((c) => c.checked);
+      const ids = selected.map((c) => c.dataset.tsCandidateId).filter(Boolean).join(",");
+
+      bulkForms.forEach((f) => {
+        const input = f.querySelector("input[name='candidate_ids']");
+        const btn = f.querySelector("button[type='submit']");
+        if (input) input.value = ids;
+        if (btn) btn.disabled = selected.length === 0;
+      });
+
+      if (selectAll) {
+        selectAll.checked = selected.length > 0 && selected.length === rowChecks.length;
+        selectAll.indeterminate = selected.length > 0 && selected.length < rowChecks.length;
+      }
+    };
+
+    if (selectAll) {
+      selectAll.addEventListener("change", () => {
+        rowChecks.forEach((c) => {
+          c.checked = selectAll.checked;
+        });
+        updateState();
+      });
+    }
+
+    rowChecks.forEach((c) => c.addEventListener("change", updateState));
+    bulkForms.forEach((f) => {
+      f.addEventListener("submit", (e) => {
+        updateState();
+        const input = f.querySelector("input[name='candidate_ids']");
+        if (!input || !input.value) e.preventDefault();
+      });
+    });
+
+    updateState();
+  });
+
   /* ── Active nav item ───────────────────────────────────────────── */
   const path = window.location.pathname;
   document.querySelectorAll(".ts-nav-item").forEach((item) => {
@@ -50,6 +95,40 @@ document.addEventListener("DOMContentLoaded", () => {
         ta.value = "[Instruction]\n<<<\n[Input]\n>>>\n[Expected Output]";
         ta.focus();
       }
+    });
+  }
+
+  const langSelect = document.getElementById("language_ids");
+  if (langSelect) {
+    const presetButtons = Array.from(
+      document.querySelectorAll("[data-ts-lang-preset-key][data-ts-lang-preset-value]"),
+    );
+
+    const setActivePresetButton = (btn) => {
+      const key = btn.dataset.tsLangPresetKey;
+      presetButtons
+        .filter((b) => b.dataset.tsLangPresetKey === key)
+        .forEach((b) => {
+          b.classList.remove("ts-btn-primary");
+          b.classList.add("ts-btn-secondary");
+        });
+      btn.classList.remove("ts-btn-secondary");
+      btn.classList.add("ts-btn-primary");
+    };
+
+    presetButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.tsLangPresetKey;
+        const value = btn.dataset.tsLangPresetValue;
+        const options = Array.from(langSelect.options);
+        const matchCount = options.filter((o) => (o.dataset[key] || "") === value).length;
+        if (matchCount < 1) return;
+        options.forEach((o) => {
+          o.selected = (o.dataset[key] || "") === value;
+        });
+        setActivePresetButton(btn);
+        langSelect.focus();
+      });
     });
   }
 

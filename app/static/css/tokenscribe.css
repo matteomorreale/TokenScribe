@@ -381,6 +381,21 @@ a:hover { color: var(--ts-accent-2); }
 .ts-table tr:hover td { background: rgba(108, 99, 255, 0.04); }
 .ts-table tr:last-child td { border-bottom: none; }
 
+details.ts-details { position: relative; }
+details.ts-details > summary { list-style: none; }
+details.ts-details > summary::-webkit-details-marker { display: none; }
+details.ts-details[open] > summary { background: var(--ts-border); }
+.ts-details-panel {
+  margin-top: 0.55rem;
+  padding: 0.85rem 0.95rem;
+  background: var(--ts-surface-2);
+  border: 1px solid var(--ts-border);
+  border-radius: var(--ts-radius);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  min-width: 360px;
+  max-width: 520px;
+}
+
 /* ── Badges ──────────────────────────────────────────────────────── */
 .ts-badge {
   display: inline-flex;
@@ -579,6 +594,78 @@ a:hover { color: var(--ts-accent-2); }
 }
 
 .ts-checkbox-item input { accent-color: var(--ts-accent); }
+
+/* ── Modals ──────────────────────────────────────────────────────── */
+.ts-modal {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 17, 23, 0.85);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  opacity: 0;
+  transition: opacity var(--ts-transition);
+}
+
+.ts-modal.active {
+  display: flex;
+  opacity: 1;
+}
+
+.ts-modal-content {
+  background: var(--ts-surface);
+  border: 1px solid var(--ts-border);
+  border-radius: var(--ts-radius-lg);
+  box-shadow: var(--ts-shadow);
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(20px);
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.ts-modal.active .ts-modal-content {
+  transform: translateY(0);
+}
+
+.ts-modal-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--ts-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ts-modal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ts-text);
+}
+
+.ts-modal-close {
+  background: none;
+  border: none;
+  color: var(--ts-text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  transition: color var(--ts-transition);
+}
+
+.ts-modal-close:hover {
+  color: var(--ts-text);
+}
+
+.ts-modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
 
 /* ── Tabs ────────────────────────────────────────────────────────── */
 .ts-tabs {
