@@ -295,3 +295,28 @@ class ExperimentModel:
             return dict(row) if row else None
         finally:
             conn.close()
+
+    def get_translation_scores_by_run(self, run_id: int) -> list:
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT DISTINCT at.prompt_id, at.language_id,
+                          l.name  AS language_name,
+                          l.code  AS language_code,
+                          p.base_text,
+                          ts.dsf, ts.rtf, ts.sfs,
+                          ts.computed_at
+                   FROM token_results tr
+                   JOIN approved_translations at
+                        ON at.prompt_id = tr.prompt_id
+                       AND at.language_id = tr.language_id
+                   JOIN translation_scores ts ON ts.candidate_id = at.candidate_id
+                   JOIN languages l ON l.id = at.language_id
+                   JOIN prompts p ON p.id = at.prompt_id
+                   WHERE tr.run_id = ?
+                   ORDER BY at.prompt_id, l.name""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()

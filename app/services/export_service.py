@@ -90,12 +90,14 @@ class ExportService:
         results: List[dict],
         pei_results: List[dict] = None,
         pei_group_results: List[dict] = None,
+        translation_scores: List[dict] = None,
     ) -> str:
         """Convert results to a structured JSON dataset."""
         dataset = {
             "token_results": results,
             "pei_results": pei_results or [],
             "pei_group_results": pei_group_results or [],
+            "translation_scores": translation_scores or [],
         }
         return json.dumps(dataset, indent=2, ensure_ascii=False)
 
