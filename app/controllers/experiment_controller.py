@@ -120,6 +120,9 @@ def new_experiment(study_id: int):
                         cost_per_output=cost_out,
                     )
                     if result.success:
+                        visible_output_tokens = _scorer.compute_structural_metrics(
+                            result.response_text or ""
+                        )["token_count"]
                         em.insert_token_result(
                             run_id=run_id,
                             prompt_id=prompt["id"],
@@ -130,6 +133,7 @@ def new_experiment(study_id: int):
                             cost=result.cost,
                             source=result.source,
                             response_text=result.response_text,
+                            visible_output_tokens=visible_output_tokens,
                         )
                         result_count += 1
                     else:

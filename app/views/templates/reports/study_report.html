@@ -50,7 +50,7 @@
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>
-        <tr><th>Language</th><th>Writing System</th><th>Avg Input Tokens</th><th>Avg Output Tokens</th><th>Results</th></tr>
+        <tr><th>Language</th><th>Writing System</th><th>Avg Input Tokens</th><th title="tiktoken of visible response text — excludes reasoning tokens">Avg Visible Output Tokens</th><th>Results</th></tr>
       </thead>
       <tbody>
         {% set lang_data = {} %}
@@ -59,7 +59,7 @@
             {% set _ = lang_data.update({r.language_name: {'ws': r.writing_system, 'in': [], 'out': []}}) %}
           {% endif %}
           {% set _ = lang_data[r.language_name]['in'].append(r.input_tokens) %}
-          {% set _ = lang_data[r.language_name]['out'].append(r.output_tokens) %}
+          {% set _ = lang_data[r.language_name]['out'].append(r.visible_output_tokens if r.visible_output_tokens is not none else 0) %}
         {% endfor %}
         {% for lang, d in lang_data.items() %}
         <tr>

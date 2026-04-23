@@ -40,8 +40,9 @@
     <div class="ts-stat-value">{{ (results|sum(attribute='input_tokens') / results|length)|int }}</div>
   </div>
   <div class="ts-stat-card">
-    <div class="ts-stat-label">Avg Output Tokens</div>
-    <div class="ts-stat-value">{{ (results|sum(attribute='output_tokens') / results|length)|int }}</div>
+    <div class="ts-stat-label">Avg Visible Output Tokens</div>
+    <div class="ts-stat-value">{{ (results|sum(attribute='visible_output_tokens') / results|length)|int }}</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">tiktoken of visible response text</div>
   </div>
   <div class="ts-stat-card">
     <div class="ts-stat-label">Total Cost</div>

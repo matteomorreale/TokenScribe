@@ -28,12 +28,24 @@
     <div class="ts-stat-value">{{ results|sum(attribute='input_tokens') | int }}</div>
   </div>
   <div class="ts-stat-card">
-    <div class="ts-stat-label">Total Output Tokens</div>
-    <div class="ts-stat-value">{{ results|sum(attribute='output_tokens') | int }}</div>
+    <div class="ts-stat-label">Visible Output Tokens</div>
+    <div class="ts-stat-value">{{ results|sum(attribute='visible_output_tokens') | int }}</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">tiktoken of visible response text</div>
   </div>
   <div class="ts-stat-card">
-    <div class="ts-stat-label">Estimated Cost</div>
+    <div class="ts-stat-label">Reasoning Tokens</div>
+    <div class="ts-stat-value">{{ results|sum(attribute='reasoning_tokens') | int }}</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">api_reported − visible (0 for non-reasoning models)</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Cost (visible output)</div>
+    <div class="ts-stat-value" style="font-size:1.2rem;">${{ "%.6f"|format(results|sum(attribute='cost_visible_only')) }}</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">comparable across all models</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Cost Total (API)</div>
     <div class="ts-stat-value" style="font-size:1.2rem;">${{ "%.6f"|format(results|sum(attribute='cost')) }}</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">includes reasoning tokens</div>
   </div>
 </div>
 
@@ -52,7 +64,13 @@
         <tr>
           <th>Prompt</th><th>Language</th><th>Writing System</th>
           <th>Provider</th><th>Model</th>
-          <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th><th>Source</th>
+          <th>Input Tok.</th>
+          <th title="tiktoken of visible response text — use for linguistic comparisons">Visible Out</th>
+          <th title="api_reported_output_tokens minus visible_output_tokens — 0 for non-reasoning models">Reasoning</th>
+          <th title="reasoning_tokens / visible_output_tokens — measures internal reasoning load">ROR</th>
+          <th title="cost computed on visible output tokens only — comparable across all models">Cost (visible)</th>
+          <th title="cost billed by the API including reasoning tokens">Cost (API)</th>
+          <th>Source</th>
           <th>AI Response</th>
         </tr>
       </thead>
@@ -65,8 +83,11 @@
           <td>{{ r.provider_name }}</td>
           <td style="font-family:var(--ts-mono); font-size:.78rem;">{{ r.model_name }}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ r.input_tokens }}</td>
-          <td style="font-variant-numeric:tabular-nums;">{{ r.output_tokens }}</td>
-          <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(r.cost) }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ r.visible_output_tokens if r.visible_output_tokens is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:{% if r.reasoning_tokens and r.reasoning_tokens > 0 %}var(--ts-warning, #f59e0b){% else %}var(--ts-text-muted){% endif %};">{{ r.reasoning_tokens if r.reasoning_tokens is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.1f"|format(r.ror) if r.ror is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(r.cost_visible_only) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">${{ "%.6f"|format(r.cost) }}</td>
           <td><span class="ts-badge ts-badge-{{ 'approved' if r.source == 'api_reported' else 'pending' }}">{{ r.source }}</span></td>
           <td>
             <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="showResponseModal('{{ r.id }}')">View</button>
@@ -76,8 +97,10 @@
               data-provider="{{ r.provider_name | default('') }}"
               data-model="{{ r.model_name | default('') }}"
               data-source="{{ r.source | default('') }}"
-              data-output-tokens="{{ r.output_tokens | default('') }}"
+              data-visible-output-tokens="{{ r.visible_output_tokens | default('') }}"
+              data-reasoning-tokens="{{ r.reasoning_tokens | default('') }}"
               data-api-reported-output-tokens="{{ r.api_reported_output_tokens | default('') }}"
+              data-ror="{{ r.ror | default('') }}"
               data-visible-output-text-length="{{ r.visible_output_text_length | default('') }}"
               data-token-accounting-mode="{{ r.token_accounting_mode | default('') }}"
             ></template>
@@ -127,11 +150,13 @@
       const model = d.model || 'N/A';
       const source = d.source || 'N/A';
       const tokenMode = d.tokenAccountingMode || 'N/A';
-      const outputTokens = d.outputTokens || 'N/A';
-      const apiOutputTokens = d.apiReportedOutputTokens || 'N/A';
+      const visibleOut = d.visibleOutputTokens || 'N/A';
+      const reasoningTokens = d.reasoningTokens || '0';
+      const apiOut = d.apiReportedOutputTokens || 'N/A';
+      const ror = d.ror || 'N/A';
       const visibleLen = d.visibleOutputTextLength || 'N/A';
 
-      metaContainer.textContent = `${provider} / ${model} • source: ${source} • token_mode: ${tokenMode} • output_tokens: ${outputTokens} • api_output_tokens: ${apiOutputTokens} • visible_len: ${visibleLen}`;
+      metaContainer.textContent = `${provider} / ${model} • source: ${source} • visible_out: ${visibleOut} • reasoning: ${reasoningTokens} • api_out: ${apiOut} • ROR: ${ror} • visible_len: ${visibleLen}`;
       modal.classList.add('active');
     }
   }

@@ -50,7 +50,7 @@
       <thead>
         <tr>
           <th style="width:36px;"><input type="checkbox" data-ts-select-all aria-label="Select all"></th>
-          <th>Language</th><th>Writing System</th><th>v</th><th>Status</th><th>SFS</th><th>Actions</th>
+          <th>Language</th><th>Writing System</th><th>v</th><th>Status</th><th>SFS</th><th>LER chr</th><th>LER tok</th><th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -69,6 +69,8 @@
             </div>
             {% else %}—{% endif %}
           </td>
+          <td>{% if c.ler_char is not none %}{{ "%.3f"|format(c.ler_char) }}{% else %}—{% endif %}</td>
+          <td>{% if c.ler_token is not none %}{{ "%.3f"|format(c.ler_token) }}{% else %}—{% endif %}</td>
           <td>
             <div style="display:flex; gap:.3rem; flex-wrap:wrap;">
               <form method="post" action="{{ url_for('translation.score_translation', candidate_id=c.id) }}">

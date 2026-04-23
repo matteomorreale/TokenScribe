@@ -86,6 +86,8 @@ class ExperimentModel:
         visible_output_text_length: int = None,
         api_reported_output_tokens: int = None,
         token_accounting_mode: str = None,
+        normalized_output_tokens: int = None,
+        visible_output_tokens: int = None,
     ) -> int:
         conn = self.db.get_connection()
         try:
@@ -95,18 +97,22 @@ class ExperimentModel:
                 token_accounting_mode = source
             if api_reported_output_tokens is None and source == "api_reported":
                 api_reported_output_tokens = output_tokens
+            # visible_output_tokens supersedes normalized_output_tokens
+            vot = visible_output_tokens if visible_output_tokens is not None else normalized_output_tokens
 
             cur = conn.execute(
                 """INSERT INTO token_results
                    (run_id, prompt_id, language_id, model_id,
                     input_tokens, output_tokens,
                     visible_output_text_length, api_reported_output_tokens,
-                    cost, source, token_accounting_mode, response_text)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    cost, source, token_accounting_mode, response_text,
+                    normalized_output_tokens, visible_output_tokens)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
-                 cost, source, token_accounting_mode, response_text),
+                 cost, source, token_accounting_mode, response_text,
+                 vot, vot),
             )
             conn.commit()
             return cur.lastrowid
@@ -134,6 +140,7 @@ class ExperimentModel:
                           tr.source,
                           COALESCE(tr.token_accounting_mode, tr.source) AS token_accounting_mode,
                           tr.response_text,
+                          COALESCE(tr.visible_output_tokens, tr.normalized_output_tokens) AS visible_output_tokens,
                           tr.created_at,
                           p.base_text, p.category,
                           l.name as language_name, l.code as language_code,
@@ -141,6 +148,7 @@ class ExperimentModel:
                           l.morphology_group as morphology_group,
                           ws.name as writing_system,
                           m.name as model_name,
+                          m.cost_per_output_token,
                           pr.name as provider_name
                    FROM token_results tr
                    JOIN prompts p ON p.id = tr.prompt_id
@@ -152,7 +160,17 @@ class ExperimentModel:
                    ORDER BY p.id, l.name, m.name""",
                 (run_id,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            results = []
+            for r in rows:
+                d = dict(r)
+                vot = d.get("visible_output_tokens") or 0
+                arot = d.get("api_reported_output_tokens") or 0
+                cpo = d.get("cost_per_output_token") or 0.0
+                d["reasoning_tokens"] = max(0, arot - vot)
+                d["cost_visible_only"] = round(vot * cpo, 8)
+                d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
+                results.append(d)
+            return results
         finally:
             conn.close()
 
@@ -304,7 +322,7 @@ class ExperimentModel:
                           l.name  AS language_name,
                           l.code  AS language_code,
                           p.base_text,
-                          ts.dsf, ts.rtf, ts.sfs,
+                          ts.dsf, ts.rtf, ts.sfs, ts.ler_char, ts.ler_token,
                           ts.computed_at
                    FROM token_results tr
                    JOIN approved_translations at

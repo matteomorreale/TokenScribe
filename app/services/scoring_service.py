@@ -78,6 +78,14 @@ class ScoringService:
         """SFS = 0.7 * DSF + 0.3 * RTF"""
         return round(0.7 * dsf + 0.3 * rtf, 6)
 
+    def compute_ler(self, original: str, translation: str) -> dict:
+        """LER: character and token expansion ratio of translation vs original."""
+        orig = self.compute_structural_metrics(original or "")
+        tran = self.compute_structural_metrics(translation or "")
+        ler_char  = round(tran["char_length"] / orig["char_length"],  6) if orig["char_length"]  else 0.0
+        ler_token = round(tran["token_count"] / orig["token_count"],  6) if orig["token_count"]  else 0.0
+        return {"ler_char": ler_char, "ler_token": ler_token}
+
     def score_translation(
         self,
         original: str,
@@ -85,16 +93,17 @@ class ScoringService:
         back_translation: Optional[str] = None,
     ) -> dict:
         """
-        Compute full SFS for a translation candidate.
+        Compute full SFS + LER for a translation candidate.
         If back_translation is None, RTF is computed using the translation itself
         as a proxy (conservative estimate).
-        Returns: {dsf, rtf, sfs}
+        Returns: {dsf, rtf, sfs, ler_char, ler_token}
         """
         dsf = self.compute_dsf(original, translation)
         bt = back_translation if back_translation else translation
         rtf = self.compute_rtf(original, bt)
         sfs = self.compute_sfs(dsf, rtf)
-        return {"dsf": dsf, "rtf": rtf, "sfs": sfs}
+        ler = self.compute_ler(original, translation)
+        return {"dsf": dsf, "rtf": rtf, "sfs": sfs, "ler_char": ler["ler_char"], "ler_token": ler["ler_token"]}
 
     # ------------------------------------------------------------------
     # PEI computation

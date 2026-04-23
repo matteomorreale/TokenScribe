@@ -190,7 +190,7 @@
       <thead>
         <tr>
           <th style="width:36px;"><input type="checkbox" data-ts-select-all aria-label="Select all"></th>
-          <th>Language</th><th>Writing System</th><th>Version</th><th>Status</th><th>SFS</th><th>DSF</th><th>RTF</th><th>Actions</th>
+          <th>Language</th><th>Writing System</th><th>Version</th><th>Status</th><th>SFS</th><th>DSF</th><th>RTF</th><th>LER chr</th><th>LER tok</th><th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -211,6 +211,8 @@
           </td>
           <td>{% if c.dsf is not none %}{{ "%.4f"|format(c.dsf) }}{% else %}—{% endif %}</td>
           <td>{% if c.rtf is not none %}{{ "%.4f"|format(c.rtf) }}{% else %}—{% endif %}</td>
+          <td>{% if c.ler_char is not none %}{{ "%.3f"|format(c.ler_char) }}{% else %}—{% endif %}</td>
+          <td>{% if c.ler_token is not none %}{{ "%.3f"|format(c.ler_token) }}{% else %}—{% endif %}</td>
           <td>
             <div style="display:flex; gap:.3rem; flex-wrap:wrap;">
               <details class="ts-details">
@@ -240,6 +242,14 @@
                     <div>
                       <div class="ts-stat-label" style="margin-bottom:.15rem;">SFS</div>
                       <div style="font-variant-numeric: tabular-nums;">{% if c.sfs is not none %}{{ "%.4f"|format(c.sfs) }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">LER chr</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.ler_char is not none %}{{ "%.3f"|format(c.ler_char) }}{% else %}—{% endif %}</div>
+                    </div>
+                    <div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">LER tok</div>
+                      <div style="font-variant-numeric: tabular-nums;">{% if c.ler_token is not none %}{{ "%.3f"|format(c.ler_token) }}{% else %}—{% endif %}</div>
                     </div>
                     <div style="grid-column: 1 / -1; height:1px; background: rgba(46, 51, 80, 0.7); margin:.2rem 0;"></div>
                     <div>

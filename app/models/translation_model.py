@@ -20,7 +20,7 @@ class TranslationModel:
                           ws.name as writing_system,
                           l.script_group as script_group,
                           l.morphology_group as morphology_group,
-                          ts.dsf, ts.rtf, ts.sfs
+                          ts.dsf, ts.rtf, ts.sfs, ts.ler_char, ts.ler_token
                    FROM translation_candidates tc
                    JOIN languages l ON l.id = tc.language_id
                    JOIN writing_systems ws ON ws.id = l.writing_system_id
@@ -89,16 +89,18 @@ class TranslationModel:
 
     # --- Scores ---
 
-    def upsert_score(self, candidate_id: int, dsf: float, rtf: float, sfs: float):
+    def upsert_score(self, candidate_id: int, dsf: float, rtf: float, sfs: float,
+                     ler_char: float = None, ler_token: float = None):
         conn = self.db.get_connection()
         try:
             conn.execute(
-                """INSERT INTO translation_scores (candidate_id, dsf, rtf, sfs)
-                   VALUES (?, ?, ?, ?)
+                """INSERT INTO translation_scores (candidate_id, dsf, rtf, sfs, ler_char, ler_token)
+                   VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(candidate_id) DO UPDATE SET
                      dsf=excluded.dsf, rtf=excluded.rtf, sfs=excluded.sfs,
+                     ler_char=excluded.ler_char, ler_token=excluded.ler_token,
                      computed_at=strftime('%Y-%m-%dT%H:%M:%S','now')""",
-                (candidate_id, dsf, rtf, sfs),
+                (candidate_id, dsf, rtf, sfs, ler_char, ler_token),
             )
             conn.commit()
         finally:
@@ -151,7 +153,7 @@ class TranslationModel:
                           ws.name as writing_system,
                           l.script_group as script_group,
                           l.morphology_group as morphology_group,
-                          tc.text, ts.sfs
+                          tc.text, ts.sfs, ts.ler_char, ts.ler_token
                    FROM approved_translations at
                    JOIN languages l ON l.id = at.language_id
                    JOIN writing_systems ws ON ws.id = l.writing_system_id

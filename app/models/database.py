@@ -94,6 +94,26 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        try:
+            cur = conn.execute("PRAGMA table_info(translation_scores)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "ler_char" not in columns:
+                conn.execute("ALTER TABLE translation_scores ADD COLUMN ler_char REAL")
+            if "ler_token" not in columns:
+                conn.execute("ALTER TABLE translation_scores ADD COLUMN ler_token REAL")
+        except sqlite3.Error:
+            pass
+
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "normalized_output_tokens" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN normalized_output_tokens INTEGER")
+            if "visible_output_tokens" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN visible_output_tokens INTEGER")
+        except sqlite3.Error:
+            pass
+
     def _create_tables(self, conn: sqlite3.Connection):
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS writing_systems (

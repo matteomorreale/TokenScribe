@@ -442,7 +442,8 @@ def ai_translate(prompt_id: int):
         translation_text = cand["translation"]
         scores = cand["scores"]
         cid = tm.create_candidate(prompt_id, lid, translation_text)
-        tm.upsert_score(cid, scores["dsf"], scores["rtf"], scores["sfs"])
+        tm.upsert_score(cid, scores["dsf"], scores["rtf"], scores["sfs"],
+                        scores.get("ler_char"), scores.get("ler_token"))
         created += 1
 
         if float(scores["sfs"]) < sfs_min:
@@ -481,9 +482,11 @@ def score_translation(candidate_id: int):
             translation=candidate["text"],
             back_translation=back_translation,
         )
-        tm.upsert_score(candidate_id, scores["dsf"], scores["rtf"], scores["sfs"])
+        tm.upsert_score(candidate_id, scores["dsf"], scores["rtf"], scores["sfs"],
+                        scores.get("ler_char"), scores.get("ler_token"))
         flash(
-            f'SFS computed: {scores["sfs"]:.4f} (DSF={scores["dsf"]:.4f}, RTF={scores["rtf"]:.4f})',
+            f'SFS={scores["sfs"]:.4f} (DSF={scores["dsf"]:.4f}, RTF={scores["rtf"]:.4f}) | '
+            f'LER chr={scores.get("ler_char", 0):.3f}, tok={scores.get("ler_token", 0):.3f}',
             "success",
         )
     except Exception as e:
