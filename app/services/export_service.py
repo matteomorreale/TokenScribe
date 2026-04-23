@@ -63,6 +63,7 @@ class ExportService:
             "reasoning_tokens",
             "api_reported_output_tokens",
             "ror",
+            "is_reasoning_model",
             "cost_visible_only",
             "cost",
             "visible_output_text_length",

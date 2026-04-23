@@ -110,6 +110,9 @@
       </tbody>
     </table>
   </div>
+  <p style="font-size:.75rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
+    <strong>Methodological note:</strong> <em>Visible Out</em> uses tiktoken (cl100k_base). For non-OpenAI models (e.g. DeepSeek), the internal tokenizer may differ slightly — small non-zero <em>Reasoning</em> values on non-reasoning models may reflect this tokenization gap. Verify on deepseek-chat rows: reasoning_tokens should be ≈ 0.
+  </p>
   {% else %}
   <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No results recorded</div></div>
   {% endif %}

@@ -46,7 +46,64 @@
 
 {% if results %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
-  <div class="ts-card-header"><span class="ts-card-title">Token Results Summary</span></div>
+  <div class="ts-card-header"><span class="ts-card-title">Model Efficiency Summary</span></div>
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr>
+          <th>Provider</th><th>Model</th>
+          <th title="tiktoken of visible response text">Avg Visible Out</th>
+          <th title="api_reported_output_tokens minus visible_output_tokens">Avg Reasoning Tok.</th>
+          <th title="reasoning_tokens / visible_output_tokens">Avg ROR</th>
+          <th title="Derived: reasoning_tokens > 0 on at least one result">Reasoning Model</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set model_data = {} %}
+        {% for r in results %}
+          {% set key = r.provider_name ~ ' / ' ~ r.model_name %}
+          {% if key not in model_data %}
+            {% set _ = model_data.update({key: {'provider': r.provider_name, 'model': r.model_name, 'vot': [], 'rt': [], 'ror': [], 'reasoning': false}}) %}
+          {% endif %}
+          {% if r.visible_output_tokens is not none %}
+            {% set _ = model_data[key]['vot'].append(r.visible_output_tokens) %}
+          {% endif %}
+          {% if r.reasoning_tokens is not none %}
+            {% set _ = model_data[key]['rt'].append(r.reasoning_tokens) %}
+          {% endif %}
+          {% if r.ror is not none %}
+            {% set _ = model_data[key]['ror'].append(r.ror) %}
+          {% endif %}
+          {% if r.is_reasoning_model %}
+            {% set _ = model_data.update({key: model_data[key] | combine({'reasoning': true})}) %}
+          {% endif %}
+        {% endfor %}
+        {% for key, d in model_data.items() %}
+        <tr>
+          <td>{{ d.provider }}</td>
+          <td style="font-family:var(--ts-mono); font-size:.78rem;">{{ d.model }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ (d['vot']|sum / d['vot']|length)|round(1) if d['vot'] else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ (d['rt']|sum / d['rt']|length)|round(1) if d['rt'] else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ (d['ror']|sum / d['ror']|length)|round(2) if d['ror'] else '—' }}</td>
+          <td>
+            {% if d.reasoning %}
+            <span class="ts-badge ts-badge-warning">yes</span>
+            {% else %}
+            <span class="ts-badge ts-badge-approved">no</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:.75rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
+    <strong>Note:</strong> <code>visible_output_tokens</code> uses tiktoken (cl100k_base). For non-OpenAI models (e.g. DeepSeek), the internal tokenizer may differ slightly — small non-zero ROR values on non-reasoning models may reflect this tokenization gap rather than true reasoning overhead. Document as a methodological limitation.
+  </p>
+</div>
+
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header"><span class="ts-card-title">Token Results Summary by Language</span></div>
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>

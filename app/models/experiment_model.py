@@ -169,6 +169,7 @@ class ExperimentModel:
                 d["reasoning_tokens"] = max(0, arot - vot)
                 d["cost_visible_only"] = round(vot * cpo, 8)
                 d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
+                d["is_reasoning_model"] = d["reasoning_tokens"] > 0
                 results.append(d)
             return results
         finally:
