@@ -171,21 +171,22 @@
           </td>
           {% if has_judges %}
           {% set jj = s.magi_judges or {} %}
-          <td style="font-variant-numeric:tabular-nums; font-size:.78rem;">
-            {% if jj.balthasar and jj.balthasar.score is not none %}{{ "%.2f"|format(jj.balthasar.score) }}
-            {% elif jj.balthasar and jj.balthasar.error %}<span title="{{ jj.balthasar.error }}" style="color:var(--ts-error,#ef4444);">err</span>
+          {% for jname in ['balthasar', 'caspar', 'melchior'] %}
+          {% set j = jj[jname] if jname in jj else none %}
+          <td class="ts-judge-cell" style="font-variant-numeric:tabular-nums; font-size:.78rem; text-align:center;">
+            {% if j %}
+            {% set raw = (j.raw_response or '') | truncate(200, True, '…') %}
+            {% set attempts = j.attempts if j.attempts is defined else none %}
+            {% set tip_lines %}Judge: {{ jname | capitalize }} ({{ j.model_name or '?' }})
+Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attempts is not none %} [{{ attempts }} attempt(s)]{% endif %}
+{% if j.error %}Error: {{ j.error }}
+{% endif %}Raw: {{ raw if raw else "n/a (record predates raw logging)" }}{% endset %}
+            <span class="ts-judge-tooltip">{{ tip_lines }}</span>
+            {% if j.score is not none %}{{ "%.2f"|format(j.score) }}
+            {% else %}<span style="color:var(--ts-error,#ef4444); text-decoration:underline dotted; cursor:help;">—</span>{% endif %}
             {% else %}—{% endif %}
           </td>
-          <td style="font-variant-numeric:tabular-nums; font-size:.78rem;">
-            {% if jj.caspar and jj.caspar.score is not none %}{{ "%.2f"|format(jj.caspar.score) }}
-            {% elif jj.caspar and jj.caspar.error %}<span title="{{ jj.caspar.error }}" style="color:var(--ts-error,#ef4444);">err</span>
-            {% else %}—{% endif %}
-          </td>
-          <td style="font-variant-numeric:tabular-nums; font-size:.78rem;">
-            {% if jj.melchior and jj.melchior.score is not none %}{{ "%.2f"|format(jj.melchior.score) }}
-            {% elif jj.melchior and jj.melchior.error %}<span title="{{ jj.melchior.error }}" style="color:var(--ts-error,#ef4444);">err</span>
-            {% else %}—{% endif %}
-          </td>
+          {% endfor %}
           <td style="font-variant-numeric:tabular-nums;">
             {% if s.magi_score is not none %}
               {{ "%.3f"|format(s.magi_score) }}

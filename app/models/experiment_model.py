@@ -401,6 +401,16 @@ class ExperimentModel:
                    ORDER BY snap.prompt_id, l.name""",
                 (run_id,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            import json as _json
+            result = []
+            for r in rows:
+                d = dict(r)
+                if d.get("magi_judges"):
+                    try:
+                        d["magi_judges"] = _json.loads(d["magi_judges"])
+                    except (ValueError, TypeError):
+                        d["magi_judges"] = None
+                result.append(d)
+            return result
         finally:
             conn.close()
