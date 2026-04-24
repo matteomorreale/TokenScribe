@@ -134,9 +134,9 @@ Note: `magi_judges` per-judge breakdown is available in JSON export only (nested
       "magi_score": 0.973,
       "magi_disagreement": 0,
       "magi_judges": {
-        "balthasar": { "model_name": "gpt-4o-mini", "score": 0.97, "raw_response": "0.97", "error": null, "attempts": 1 },
-        "caspar":    { "model_name": "gpt-4o-mini", "score": 0.99, "raw_response": "0.99", "error": null, "attempts": 1 },
-        "melchior":  { "model_name": "gpt-4o-mini", "score": 0.96, "raw_response": "0.96", "error": null, "attempts": 1 }
+        "balthasar": { "model_name": "gpt-4o-mini", "semantic_fidelity": 5, "register_match": 4, "naturalness": 5, "score": 0.9167, "raw_response": "{...}", "error": null, "attempts": 1 },
+        "caspar":    { "model_name": "gpt-4o-mini", "semantic_fidelity": 4, "register_match": 5, "naturalness": 5, "score": 0.9583, "raw_response": "{...}", "error": null, "attempts": 1 },
+        "melchior":  { "model_name": "gpt-4o-mini", "semantic_fidelity": 5, "register_match": 5, "naturalness": 4, "score": 0.9167, "raw_response": "{...}", "error": null, "attempts": 1 }
       }
     }
   ]

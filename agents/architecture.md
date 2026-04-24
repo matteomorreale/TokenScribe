@@ -25,12 +25,10 @@ TokenScribe/
 │   │   ├── llm_service.py       # Unified LLM provider interface (7 providers)
 │   │   ├── scoring_service.py   # SFS (DSF+RTF), LER, PEI, MAGI Phase 1 computation
 │   │   ├── magi_service.py      # MAGI Phase 2: three-judge LLM panel with retry
-│   │   ├── translation_service.py  # AI translation candidate generation
 │   │   └── export_service.py    # Dataset export (CSV, JSON)
 │   ├── views/
 │   │   └── templates/           # Jinja2 HTML templates (MVC Views)
 │   │       ├── base.html
-│   │       ├── index.html
 │   │       ├── studies/
 │   │       ├── prompts/
 │   │       ├── translations/
@@ -44,13 +42,11 @@ TokenScribe/
 ├── instance/
 │   └── tokenscribe.db           # SQLite database (gitignored)
 ├── agents/                      # AI agent documentation
-├── tests/                       # Unit and integration tests
 ├── run.py                       # Entry point
 ├── config.py                    # Configuration classes
 ├── requirements.txt
 ├── agent.md
-├── claude.md
-└── README.md
+└── claude.md
 ```
 
 ## Core Modules
@@ -67,10 +63,9 @@ TokenScribe/
 
 ### Translation Pipeline
 
-- controllers/translation_controller.py
+- controllers/translation_controller.py — includes `ai_translate()` for AI candidate generation (uses gpt-5)
 - models/translation_model.py
 - models/selection_score_model.py
-- services/translation_service.py
 - services/scoring_service.py
 - services/magi_service.py
 
@@ -105,11 +100,14 @@ TokenScribe/
 
 - `evaluate(original, translation, language, sfs, ler_char, llm_service, model_info)` → verdict dict
   — retries up to `MAX_RETRIES=3` times on parse failure or API error
-  — verdict: `{model_id, model_name, score, raw_response, error, attempts}`
+  — verdict: `{model_id, model_name, semantic_fidelity, register_match, naturalness, score, raw_response, error, attempts}`
 - `run_panel(…, judge_models)` → `{judges: {name: verdict}, magi_score, magi_disagreement}`
   — `judge_models`: list of 3 model_info dicts (Balthasar, Caspar, Melchior)
   — `magi_score = mean(valid_scores)`; `magi_disagreement = stdev > 0.15`
-- `_parse_score(text)` → float 0–1 or None
+- `_parse_verdict(text)` → `{semantic_fidelity, register_match, naturalness, score, error}` — primary parser
+  — extracts JSON object with three 1–5 integer dimensions; score = `mean((v-1)/4)` → 0–1
+  — falls back to `_parse_score()` on JSON failure ("Holistic fallback")
+- `_parse_score(text)` → float 0–1 or None — fallback only
   — Pass 1: bare number as full response
   — Pass 2: first `0.xx` or `1.0x` decimal in text (skips denominators via `(?<!/)\b`)
   — Pass 3: standalone `0` or `1`

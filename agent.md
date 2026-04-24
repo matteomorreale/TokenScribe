@@ -67,14 +67,18 @@ Stored in `selection_score_results`.
 
 ### MAGI Phase 2 — LLM Judge Panel
 
-Three independent LLM judges (Balthasar, Caspar, Melchior) each score a translation 0.0–1.0.
+Three independent LLM judges (Balthasar, Caspar, Melchior) each score a translation on **three dimensions**:
+`semantic_fidelity`, `register_match`, `naturalness` — each an integer 1–5.
+Aggregate score per judge = `mean((v-1)/4)` across the three dimensions → normalized to 0.0–1.0.
 `magi_score = mean(valid_scores)` — skips judges that failed.
 `magi_disagreement = stdev(valid_scores) > 0.15`.
-Per-judge verdict stored in `magi_judges` (JSON): `{model_id, model_name, score, raw_response, error, attempts}`.
+Per-judge verdict stored in `magi_judges` (JSON): `{model_id, model_name, semantic_fidelity, register_match, naturalness, score, raw_response, error, attempts}`.
 MAGIService retries each judge up to 3 times on parse failure or API error.
-`_parse_score()` uses three-pass extraction: bare number → embedded decimal → standalone 0/1.
-The judge prompt is structured with `## Output format (MANDATORY)` and four valid-response examples
-to anchor models (especially reasoning models like gpt-5) that may add explanatory text.
+`_parse_verdict()` is the primary parser: extracts a JSON object `{semantic_fidelity, register_match, naturalness}` from the response.
+Falls back to `_parse_score()` (three-pass: bare float → embedded 0.xx/1.0x decimal → standalone 0/1) for holistic responses.
+The judge prompt asks for a single JSON object with the three dimension keys, structured with
+`## Output format (MANDATORY)` and one valid-response example to anchor models
+(especially reasoning models like gpt-5) that may add explanatory text.
 
 ### Token Efficiency Metrics (experiment runs)
 
