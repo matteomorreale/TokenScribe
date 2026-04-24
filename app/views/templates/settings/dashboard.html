@@ -125,6 +125,63 @@
   </form>
 </div>
 
+<!-- Research Battery -->
+<div class="ts-card" style="margin-bottom:1.5rem;">
+  <div class="ts-card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem;">
+    <div>
+      <span class="ts-card-title">Research Battery</span>
+      <p style="font-size:.8rem; color:var(--ts-text-muted); margin:.25rem 0 0;">
+        Pre-built studies with research-grade prompts covering register, text length, and morphological complexity.
+        Seed a battery to get a Study with all prompts ready for AI translation and experiment runs.
+      </p>
+    </div>
+    <form method="post" action="{{ url_for('settings.seed_battery') }}">
+      <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm" data-loading="Seeding…"
+              {% if battery_status | selectattr('seeded') | list | length == battery_status | length %}disabled{% endif %}>
+        Seed All
+      </button>
+    </form>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:.75rem; margin-top:.25rem;">
+    {% for battery in battery_status %}
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:1rem;
+                padding:1rem 1.1rem; border-radius:8px; background:var(--ts-bg);
+                border:1px solid var(--ts-border);">
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; align-items:center; gap:.6rem; margin-bottom:.3rem;">
+          {% if battery.seeded %}
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--ts-success); flex-shrink:0;"></span>
+          <span style="font-weight:600; font-size:.875rem;">{{ battery.name }}</span>
+          <span class="ts-badge ts-badge-info">{{ battery.prompt_count }} prompts</span>
+          <span style="font-size:.75rem; color:var(--ts-success); font-weight:500;">Seeded</span>
+          {% else %}
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--ts-border); flex-shrink:0;"></span>
+          <span style="font-weight:600; font-size:.875rem;">{{ battery.name }}</span>
+          <span class="ts-badge ts-badge-info">{{ battery.prompt_count }} prompts</span>
+          {% endif %}
+        </div>
+        <p style="font-size:.78rem; color:var(--ts-text-muted); margin:0; line-height:1.5;">
+          {{ battery.description }}
+        </p>
+        {% if battery.seeded %}
+        <div style="margin-top:.5rem;">
+          <a href="{{ url_for('study.detail_study', study_id=battery.study_id) }}"
+             class="ts-btn ts-btn-secondary ts-btn-sm">Open Study →</a>
+        </div>
+        {% endif %}
+      </div>
+      {% if not battery.seeded %}
+      <form method="post" action="{{ url_for('settings.seed_battery') }}" style="flex-shrink:0;">
+        <input type="hidden" name="battery_name" value="{{ battery.name }}">
+        <button type="submit" class="ts-btn ts-btn-secondary ts-btn-sm" data-loading="Seeding…">Seed</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
 <!-- Danger Zone -->
 <div class="ts-danger-zone">
   <div class="ts-danger-zone-title">⚠ Danger Zone</div>

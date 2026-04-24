@@ -4,7 +4,8 @@ Author: Matteo Morreale
 """
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
-from app.models import SettingsModel
+from app.models import SettingsModel, StudyModel, PromptModel
+from app.services import BatteryService
 
 settings_bp = Blueprint("settings", __name__, url_prefix="/settings")
 
@@ -23,6 +24,14 @@ def _stm() -> SettingsModel:
     return SettingsModel(current_app.config["DB"])
 
 
+def _study_model() -> StudyModel:
+    return StudyModel(current_app.config["DB"])
+
+
+def _prompt_model() -> PromptModel:
+    return PromptModel(current_app.config["DB"])
+
+
 @settings_bp.route("/")
 def settings_dashboard():
     stm = _stm()
@@ -33,6 +42,7 @@ def settings_dashboard():
         models_by_provider[p["id"]] = stm.get_models_by_provider(p["id"])
     languages = stm.get_all_languages()
     writing_systems = stm.get_all_writing_systems()
+    battery_status = BatteryService.get_status(_study_model())
     return render_template(
         "settings/dashboard.html",
         current_settings=current_settings,
@@ -41,6 +51,7 @@ def settings_dashboard():
         models_by_provider=models_by_provider,
         languages=languages,
         writing_systems=writing_systems,
+        battery_status=battery_status,
     )
 
 
@@ -95,6 +106,24 @@ def add_language():
         flash(f'Language "{name}" added.', "success")
     else:
         flash("All language fields are required.", "error")
+    return redirect(url_for("settings.settings_dashboard"))
+
+
+@settings_bp.route("/seed-battery", methods=["POST"])
+def seed_battery():
+    battery_name = request.form.get("battery_name", "").strip() or None
+    results = BatteryService.seed(_study_model(), _prompt_model(), battery_name)
+    created = [r for r in results if r["created"]]
+    skipped = [r for r in results if not r["created"]]
+    if created:
+        names = ", ".join(f'"{r["name"]}"' for r in created)
+        total_prompts = sum(r["prompts_added"] for r in created)
+        flash(f"Seeded {len(created)} battery study{'ies' if len(created) != 1 else ''}: {names} ({total_prompts} prompts total).", "success")
+    if skipped:
+        names = ", ".join(f'"{r["name"]}"' for r in skipped)
+        flash(f"Already present, skipped: {names}.", "info")
+    if not created and not skipped:
+        flash("No batteries matched the request.", "warning")
     return redirect(url_for("settings.settings_dashboard"))
 
 
