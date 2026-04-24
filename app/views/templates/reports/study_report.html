@@ -55,7 +55,7 @@
           <th title="tiktoken of visible response text">Avg Visible Out</th>
           <th title="api_reported_output_tokens minus visible_output_tokens">Avg Reasoning Tok.</th>
           <th title="reasoning_tokens / visible_output_tokens">Avg ROR</th>
-          <th title="Derived: reasoning_tokens > 0 on at least one result">Reasoning Model</th>
+          <th title="Derived: reasoning_tokens > 10 on at least one result (threshold avoids tokenizer-drift false positives)">Reasoning Model</th>
         </tr>
       </thead>
       <tbody>
@@ -113,17 +113,21 @@
         {% set lang_data = {} %}
         {% for r in results %}
           {% if r.language_name not in lang_data %}
-            {% set _ = lang_data.update({r.language_name: {'ws': r.writing_system, 'in': [], 'out': []}}) %}
+            {% set _ = lang_data.update({r.language_name: {'ws': r.writing_system, 'in': [], 'out': [], 'invalid': 0}}) %}
           {% endif %}
           {% set _ = lang_data[r.language_name]['in'].append(r.input_tokens) %}
-          {% set _ = lang_data[r.language_name]['out'].append(r.visible_output_tokens if r.visible_output_tokens is not none else 0) %}
+          {% if r.response_valid %}
+            {% set _ = lang_data[r.language_name]['out'].append(r.visible_output_tokens if r.visible_output_tokens is not none else 0) %}
+          {% else %}
+            {% set _ = lang_data[r.language_name].update({'invalid': lang_data[r.language_name]['invalid'] + 1}) %}
+          {% endif %}
         {% endfor %}
         {% for lang, d in lang_data.items() %}
         <tr>
-          <td><strong>{{ lang }}</strong></td>
+          <td><strong>{{ lang }}</strong>{% if d['invalid'] > 0 %} <span title="{{ d['invalid'] }} empty response(s) excluded" style="color:var(--ts-warning,#e6a817);font-size:.75rem;">⚠ {{ d['invalid'] }}</span>{% endif %}</td>
           <td><span class="ts-badge ts-badge-info">{{ d.ws }}</span></td>
           <td style="font-variant-numeric:tabular-nums;">{{ (d['in']|sum / d['in']|length)|int }}</td>
-          <td style="font-variant-numeric:tabular-nums;">{{ (d['out']|sum / d['out']|length)|int }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{% if d['out'] %}{{ (d['out']|sum / d['out']|length)|int }}{% else %}—{% endif %}</td>
           <td>{{ d['in']|length }}</td>
         </tr>
         {% endfor %}

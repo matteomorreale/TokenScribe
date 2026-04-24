@@ -108,7 +108,7 @@
       "app/views/templates/reports/scores.html"
     ],
     "requires_db_changes": true,
-    "notes_for_agent": "New DB columns: visible_output_tokens, normalized_output_tokens (alias), api_reported_output_tokens. Derived fields computed in get_results_by_run() Python loop (NOT stored): reasoning_tokens, cost_visible_only, ror, is_reasoning_model. Bug fixed: Jinja sum filter on NULL values — always replace None with 0 before appending to results list. Uses tiktoken cl100k_base for all models; note non-OpenAI models may show small non-zero reasoning_tokens due to tokenizer mismatch."
+    "notes_for_agent": "New DB columns: visible_output_tokens, normalized_output_tokens (alias), api_reported_output_tokens. Derived fields computed in get_results_by_run() Python loop (NOT stored): reasoning_tokens, cost_visible_only, ror, is_reasoning_model. Uses tiktoken cl100k_base for all models."
   },
   {
     "task_id": "T010",
@@ -122,7 +122,7 @@
       "app/services/export_service.py"
     ],
     "requires_db_changes": false,
-    "notes_for_agent": "get_translation_scores_by_run() joins through approved_translations to fetch DSF, RTF, SFS, LER per (prompt_id, language_id). Both export_csv() and export_json() now call this and pass translation_scores to ExportService."
+    "notes_for_agent": "get_translation_scores_by_run() joins through run_translation_snapshot (not approved_translations) to fetch DSF, RTF, SFS, LER per (prompt_id, language_id). Both export_csv() and export_json() call this and pass translation_scores to ExportService."
   },
   {
     "task_id": "T011",
@@ -142,7 +142,98 @@
       "app/views/templates/reports/scores.html"
     ],
     "requires_db_changes": true,
-    "notes_for_agent": "New table: selection_score_results. Formula: score_absolute = SFS − 0.5*PEI − 0.5*|LER_char−1|. Divergence: magi_required = rank > max(1, floor(n/4)). PEI used is the most recent from experiment_runs for that prompt (get_latest_pei_for_prompt). Endpoint: POST /prompts/{prompt_id}/selection-scores. Button 'Compute MAGI Scores' in translations/list.html topbar. Display in reports/scores.html after PEI section. Phase 2 (LLM panel: Balthasar/Casper/Melchior) not yet implemented."
+    "notes_for_agent": "New table: selection_score_results (UNIQUE candidate_id). Formula: score_absolute = SFS − 0.5*PEI − 0.5*|LER_char−1|. magi_required = rank > max(1, floor(n/4)). PEI used: get_latest_pei_for_prompt(). upsert_scores() resets magi_score/magi_judges to NULL on recompute."
+  },
+  {
+    "task_id": "T012",
+    "title": "MAGI Phase 2 — LLM judge panel (Balthasar, Caspar, Melchior)",
+    "status": "completed",
+    "dependencies": ["T011"],
+    "affected_modules": ["MAGIService", "SelectionScoreModel", "TranslationController", "ExportService", "ExperimentModel"],
+    "affected_files": [
+      "app/services/magi_service.py",
+      "app/services/__init__.py",
+      "app/models/database.py",
+      "app/models/selection_score_model.py",
+      "app/models/experiment_model.py",
+      "app/controllers/translation_controller.py",
+      "app/services/export_service.py",
+      "app/views/templates/translations/list.html"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New DB columns on selection_score_results: magi_score REAL, magi_disagreement INT, magi_judges TEXT (JSON). New service: MAGIService with evaluate() (3 retries), run_panel() (3 judges), _parse_score() (3-pass). Judge prompt uses structured sections + output examples to handle reasoning models. Per-judge verdict: {model_id, model_name, score, raw_response, error, attempts}. magi_judges deserialized in both get_by_prompt() and get_translation_scores_by_run() so templates and exports always get a dict. JSON export includes magi_judges as nested object. MAGI modal in translations/list.html: candidate checkboxes + filter buttons (All/Non-rejected/Approved) + Phase 2 toggle + 3 model selectors. MAGI Results card below candidates table with per-judge B/C/M columns and disagreement flag ↯."
+  },
+  {
+    "task_id": "T013",
+    "title": "Pre-run readiness semaphore",
+    "status": "completed",
+    "dependencies": ["T012"],
+    "affected_modules": ["SelectionScoreModel", "PromptController", "ExperimentController"],
+    "affected_files": [
+      "app/models/selection_score_model.py",
+      "app/controllers/prompt_controller.py",
+      "app/controllers/experiment_controller.py",
+      "app/views/templates/prompts/detail.html",
+      "app/views/templates/experiments/new.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "get_readiness_by_prompts(prompt_ids) aggregates approved_count, scored_count, magi_count, magi_required_count, judge_count and computes status (green/yellow/red). prompts/detail.html shows a card with colored left border and stat row. experiments/new.html replaces static prompt list with a readiness table (Approved/SFS/MAGI/Judge↯/Status columns) and a red banner if any prompt has no approved translations."
+  },
+  {
+    "task_id": "T014",
+    "title": "Delete experiments + bulk delete reports",
+    "status": "completed",
+    "dependencies": ["T003"],
+    "affected_modules": ["ExperimentController", "ReportController", "ExperimentModel"],
+    "affected_files": [
+      "app/models/experiment_model.py",
+      "app/controllers/experiment_controller.py",
+      "app/controllers/report_controller.py",
+      "app/views/templates/experiments/list.html",
+      "app/views/templates/reports/dashboard.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "POST /experiments/{run_id}/delete accepts optional 'next' form param for redirect. POST /reports/runs/bulk-delete accepts 'run_ids' (comma-separated). Bulk delete JS in dashboard.html is standalone (does not reuse data-ts-candidate-id mechanism) to avoid collision with translation bulk actions."
+  },
+  {
+    "task_id": "T015",
+    "title": "UX — loading states on action buttons",
+    "status": "completed",
+    "dependencies": ["T006"],
+    "affected_modules": ["Views"],
+    "affected_files": [
+      "app/static/css/tokenscribe.css",
+      "app/static/js/tokenscribe.js",
+      "app/views/templates/experiments/new.html",
+      "app/views/templates/translations/list.html",
+      "app/views/templates/prompts/detail.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "Global form submit listener in tokenscribe.js finds button[data-loading] and applies: disabled=true, .ts-btn-loading class (CSS spinner via ::before), text=data-loading value. CSS: @keyframes ts-spin + .ts-btn-loading. Buttons annotated: Run Experiment, Calcola MAGI Scores, Score SFS, Genera traduzioni, Score."
+  },
+  {
+    "task_id": "T016",
+    "title": "MAGI judge tooltip with raw response",
+    "status": "completed",
+    "dependencies": ["T012"],
+    "affected_modules": ["MAGIService", "Views"],
+    "affected_files": [
+      "app/services/magi_service.py",
+      "app/static/css/tokenscribe.css",
+      "app/views/templates/translations/list.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "MAGIService.evaluate() now stores raw_response (LLM response text) and attempts count in verdict dict. Three error cases: 'Parse failed: no valid 0–1 score found in response', 'API error: ...', 'Exception: ...'. CSS: .ts-judge-cell (position:relative) + .ts-judge-tooltip (position:absolute, display:none, shown on :hover). Tooltip content: judge name, model, score, attempts, error, raw_response (truncated 200 chars). Failed judge — shown as styled with underline dotted. Old records without raw_response show 'n/a (record predates raw logging)'."
+  },
+  {
+    "task_id": "T017",
+    "title": "MAGI retry logic and improved score parsing",
+    "status": "completed",
+    "dependencies": ["T016"],
+    "affected_modules": ["MAGIService"],
+    "affected_files": ["app/services/magi_service.py"],
+    "requires_db_changes": false,
+    "notes_for_agent": "evaluate() retries up to MAX_RETRIES=3 via _call_once(). Returns on first successful parse; on all failures returns last verdict. _parse_score() three-pass: (1) bare number as full response, (2) first 0.xx/1.0x decimal in text with (?<!/) lookbehind to skip denominators, (3) standalone 0 or 1. Judge prompt rewritten with structured sections (## Input, ## Task, ## Output format MANDATORY) and four valid-response examples. logging.getLogger(__name__) logs each verdict at INFO (success) or WARNING (failure) with raw response repr."
   }
 ]
 ```

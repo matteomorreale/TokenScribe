@@ -18,6 +18,11 @@ class TokenScribeConfig:
     # Pagination
     ITEMS_PER_PAGE = 25
 
+    # Minimum reasoning_tokens to classify a model as a reasoning model.
+    # Values below this threshold are treated as tokenizer drift (tiktoken vs
+    # provider tokenizer) rather than true hidden reasoning chains.
+    REASONING_THRESHOLD = 10
+
     # Supported LLM providers
     SUPPORTED_PROVIDERS = [
         "openai",

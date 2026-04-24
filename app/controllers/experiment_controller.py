@@ -149,6 +149,7 @@ def new_experiment(study_id: int):
                         visible_output_tokens = _scorer.compute_structural_metrics(
                             result.response_text or ""
                         )["token_count"]
+                        is_valid = bool((result.response_text or "").strip()) and visible_output_tokens > 0
                         em.insert_token_result(
                             run_id=run_id,
                             prompt_id=prompt["id"],
@@ -160,6 +161,7 @@ def new_experiment(study_id: int):
                             source=result.source,
                             response_text=result.response_text,
                             visible_output_tokens=visible_output_tokens,
+                            response_valid=is_valid,
                         )
                         result_count += 1
                     else:

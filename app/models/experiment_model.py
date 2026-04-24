@@ -4,6 +4,9 @@ Author: Matteo Morreale
 """
 
 from .database import DatabaseManager
+from config import TokenScribeConfig
+
+_REASONING_THRESHOLD = TokenScribeConfig.REASONING_THRESHOLD
 
 
 class ExperimentModel:
@@ -128,6 +131,7 @@ class ExperimentModel:
         token_accounting_mode: str = None,
         normalized_output_tokens: int = None,
         visible_output_tokens: int = None,
+        response_valid: bool = None,
     ) -> int:
         conn = self.db.get_connection()
         try:
@@ -139,6 +143,10 @@ class ExperimentModel:
                 api_reported_output_tokens = output_tokens
             # visible_output_tokens supersedes normalized_output_tokens
             vot = visible_output_tokens if visible_output_tokens is not None else normalized_output_tokens
+            if response_valid is None:
+                rv = 1 if (response_text or "").strip() and (vot is None or vot > 0) else 0
+            else:
+                rv = 1 if response_valid else 0
 
             cur = conn.execute(
                 """INSERT INTO token_results
@@ -146,13 +154,13 @@ class ExperimentModel:
                     input_tokens, output_tokens,
                     visible_output_text_length, api_reported_output_tokens,
                     cost, source, token_accounting_mode, response_text,
-                    normalized_output_tokens, visible_output_tokens)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    normalized_output_tokens, visible_output_tokens, response_valid)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
                  cost, source, token_accounting_mode, response_text,
-                 vot, vot),
+                 vot, vot, rv),
             )
             conn.commit()
             return cur.lastrowid
@@ -181,6 +189,7 @@ class ExperimentModel:
                           COALESCE(tr.token_accounting_mode, tr.source) AS token_accounting_mode,
                           tr.response_text,
                           COALESCE(tr.visible_output_tokens, tr.normalized_output_tokens) AS visible_output_tokens,
+                          COALESCE(tr.response_valid, CASE WHEN COALESCE(tr.response_text, '') = '' THEN 0 ELSE 1 END) AS response_valid,
                           tr.created_at,
                           p.base_text, p.category,
                           l.name as language_name, l.code as language_code,
@@ -210,7 +219,7 @@ class ExperimentModel:
                 d["reasoning_tokens"] = max(0, arot - vot)
                 d["cost_visible_only"] = round(vot * cpo, 8)
                 d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
-                d["is_reasoning_model"] = d["reasoning_tokens"] > 0
+                d["is_reasoning_model"] = d["reasoning_tokens"] > _REASONING_THRESHOLD
                 results.append(d)
             return results
         finally:

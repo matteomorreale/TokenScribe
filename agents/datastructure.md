@@ -62,7 +62,7 @@ token_results                 -- IMMUTABLE: INSERT only, no UPDATE
   -- reasoning_tokens = max(0, api_reported_output_tokens - visible_output_tokens)
   -- cost_visible_only = visible_output_tokens × cost_per_output_token
   -- ror = reasoning_tokens / visible_output_tokens
-  -- is_reasoning_model = reasoning_tokens > 0
+  -- is_reasoning_model = reasoning_tokens > 10  (threshold guards against tokenizer-drift false positives)
 
 pei_results
   id, run_id → experiment_runs.id, prompt_id → prompts.id,
@@ -86,7 +86,7 @@ pei_group_results
   pei_band TEXT,
   computed_at
 
-selection_score_results       -- MAGI Phase 1 (per candidate)
+selection_score_results       -- MAGI Phase 1 + Phase 2 (per candidate)
   id, candidate_id → translation_candidates.id UNIQUE,
   prompt_id → prompts.id,
   score_absolute (REAL),      -- SFS − λ·PEI − ν·|LER_char−1|
@@ -95,6 +95,12 @@ selection_score_results       -- MAGI Phase 1 (per candidate)
   magi_required (INT 0/1),    -- rank > max(1, floor(n/4))
   lambda_used (REAL),         -- 0.5
   nu_used (REAL),             -- 0.5
+  magi_score (REAL),          -- mean of valid Phase 2 judge scores (NULL until Phase 2 run)
+  magi_disagreement (INT 0/1),-- stdev(valid_scores) > 0.15
+  magi_judges (TEXT JSON),    -- {balthasar: {model_id, model_name, score, raw_response, error, attempts},
+                              --  caspar:    {…},
+                              --  melchior:  {…}}
+                              -- NULL until Phase 2 run; deserialized in model layer before use
   computed_at
 
 run_translation_snapshot
@@ -140,11 +146,48 @@ token_results ──> models ──> providers
 ## Key Constraints
 
 - `token_results`: INSERT only, no UPDATE (immutable runs)
-- `run_translation_snapshot`: written once at run start via `snapshot_translations(run_id, study_id)`; `get_translation_scores_by_run` JOINs this table, not `approved_translations`, so historical reports are immune to re-approvals
+- `run_translation_snapshot`: written once at run start via `snapshot_translations(run_id, study_id)`;
+  `get_translation_scores_by_run` JOINs this table, not `approved_translations`, so historical
+  reports are immune to re-approvals
 - `approved_translations`: UNIQUE(prompt_id, language_id) — one approved per language per prompt
 - `translation_scores`: UNIQUE(candidate_id) — one score row per candidate, upserted
-- `selection_score_results`: UNIQUE(candidate_id) — one MAGI score per candidate, upserted
+- `selection_score_results`: UNIQUE(candidate_id) — one MAGI score per candidate, upserted;
+  `magi_score`, `magi_disagreement`, `magi_judges` are reset to NULL when Phase 1 is recomputed
 - `settings`: key is UNIQUE
+
+## magi_judges JSON Structure
+
+```json
+{
+  "balthasar": {
+    "model_id": 3,
+    "model_name": "gpt-4o-mini",
+    "score": 0.95,
+    "raw_response": "0.95",
+    "error": null,
+    "attempts": 1
+  },
+  "caspar": {
+    "model_id": 3,
+    "model_name": "gpt-4o-mini",
+    "score": null,
+    "raw_response": "I believe this translation is excellent and captures...",
+    "error": "Parse failed: no valid 0–1 score found in response",
+    "attempts": 3
+  },
+  "melchior": {
+    "model_id": 3,
+    "model_name": "gpt-4o-mini",
+    "score": null,
+    "raw_response": null,
+    "error": "API error: Connection timeout",
+    "attempts": 3
+  }
+}
+```
+
+`raw_response` is NULL for API-level failures; always a string (possibly empty) for API successes.
+Records stored before `raw_response` was introduced will have no `raw_response` key — treat as NULL.
 
 ## Migration Strategy
 

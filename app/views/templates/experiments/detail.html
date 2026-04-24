@@ -83,7 +83,10 @@
           <td>{{ r.provider_name }}</td>
           <td style="font-family:var(--ts-mono); font-size:.78rem;">{{ r.model_name }}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ r.input_tokens }}</td>
-          <td style="font-variant-numeric:tabular-nums;">{{ r.visible_output_tokens if r.visible_output_tokens is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums;">
+            {% if not r.response_valid %}<span title="Empty response — excluded from averages" style="color:var(--ts-warning,#e6a817);">⚠</span> {% endif %}
+            {{ r.visible_output_tokens if r.visible_output_tokens is not none else '—' }}
+          </td>
           <td style="font-variant-numeric:tabular-nums; color:{% if r.reasoning_tokens and r.reasoning_tokens > 0 %}var(--ts-warning, #f59e0b){% else %}var(--ts-text-muted){% endif %};">{{ r.reasoning_tokens if r.reasoning_tokens is not none else '—' }}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ "%.1f"|format(r.ror) if r.ror is not none else '—' }}</td>
           <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(r.cost_visible_only) }}</td>
@@ -103,6 +106,7 @@
               data-ror="{{ r.ror | default('') }}"
               data-visible-output-text-length="{{ r.visible_output_text_length | default('') }}"
               data-token-accounting-mode="{{ r.token_accounting_mode | default('') }}"
+              data-response-valid="{{ r.response_valid | default(1) }}"
             ></template>
           </td>
         </tr>
@@ -111,7 +115,7 @@
     </table>
   </div>
   <p style="font-size:.75rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
-    <strong>Methodological note:</strong> <em>Visible Out</em> uses tiktoken (cl100k_base). For non-OpenAI models (e.g. DeepSeek), the internal tokenizer may differ slightly — small non-zero <em>Reasoning</em> values on non-reasoning models may reflect this tokenization gap. Verify on deepseek-chat rows: reasoning_tokens should be ≈ 0.
+    <strong>Methodological note:</strong> <em>Visible Out</em> uses tiktoken (cl100k_base). For non-OpenAI models the internal tokenizer may differ slightly, producing small non-zero <em>Reasoning</em> values even on non-reasoning models. A model is flagged as reasoning only when <code>reasoning_tokens &gt; 10</code> (noise threshold) to avoid false positives from tokenizer drift.
   </p>
   {% else %}
   <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No results recorded</div></div>

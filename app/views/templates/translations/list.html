@@ -179,7 +179,8 @@
             {% set attempts = j.attempts if j.attempts is defined else none %}
             {% set tip_lines %}Judge: {{ jname | capitalize }} ({{ j.model_name or '?' }})
 Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attempts is not none %} [{{ attempts }} attempt(s)]{% endif %}
-{% if j.error %}Error: {{ j.error }}
+{% if j.semantic_fidelity is not none %}Semantic fidelity: {{ j.semantic_fidelity }}/5  |  Register match: {{ j.register_match }}/5  |  Naturalness: {{ j.naturalness }}/5
+{% endif %}{% if j.error %}Error: {{ j.error }}
 {% endif %}Raw: {{ raw if raw else "n/a (record predates raw logging)" }}{% endset %}
             <span class="ts-judge-tooltip">{{ tip_lines }}</span>
             {% if j.score is not none %}{{ "%.2f"|format(j.score) }}

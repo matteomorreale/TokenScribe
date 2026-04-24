@@ -111,6 +111,9 @@ class DatabaseManager:
                 conn.execute("ALTER TABLE token_results ADD COLUMN normalized_output_tokens INTEGER")
             if "visible_output_tokens" not in columns:
                 conn.execute("ALTER TABLE token_results ADD COLUMN visible_output_tokens INTEGER")
+            if "response_valid" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN response_valid INTEGER NOT NULL DEFAULT 1")
+                conn.execute("UPDATE token_results SET response_valid = CASE WHEN COALESCE(response_text, '') = '' THEN 0 ELSE 1 END")
         except sqlite3.Error:
             pass
 
