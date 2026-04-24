@@ -12,6 +12,9 @@
 {% block topbar_actions %}
 <a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary">+ Add</a>
 <a href="{{ url_for('translation.compare_translations', prompt_id=prompt.id) }}" class="ts-btn ts-btn-secondary">Compare</a>
+{% if candidates %}
+<button class="ts-btn ts-btn-secondary" onclick="openMAGIModal()">MAGI System</button>
+{% endif %}
 {% endblock %}
 {% block content %}
 <div class="ts-page-header">
@@ -27,7 +30,7 @@
 </div>
 
 {% if candidates %}
-<div class="ts-card" data-ts-bulk-candidates="1">
+<div class="ts-card" style="margin-bottom:1.25rem;" data-ts-bulk-candidates="1">
   <div class="ts-card-header" style="gap:.75rem; flex-wrap:wrap;">
     <span class="ts-card-title">Candidates ({{ candidates|length }})</span>
     <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-left:auto;">
@@ -50,12 +53,16 @@
       <thead>
         <tr>
           <th style="width:36px;"><input type="checkbox" data-ts-select-all aria-label="Select all"></th>
-          <th>Language</th><th>Writing System</th><th>v</th><th>Status</th><th>SFS</th><th>LER chr</th><th>LER tok</th><th>Actions</th>
+          <th>Language</th><th>Writing System</th><th>v</th><th>Status</th>
+          <th>SFS</th><th>LER chr</th><th>LER tok</th>
+          <th title="MAGI Selection Score = SFS − 0.5·PEI − 0.5·|LER−1|">Score</th>
+          <th title="Rank (1 = best)">Rank</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for c in candidates %}
-        <tr>
+        <tr{% if c.score_rank == 1 %} style="background:rgba(var(--ts-accent-rgb,34,197,94),.06);"{% endif %}>
           <td><input type="checkbox" data-ts-candidate-id="{{ c.id }}" aria-label="Select {{ c.language_name }}"></td>
           <td><strong>{{ c.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ c.language_code }})</span></td>
           <td><span class="ts-badge ts-badge-info">{{ c.writing_system }}</span></td>
@@ -63,7 +70,7 @@
           <td><span class="ts-badge ts-badge-{{ c.status }}">{{ c.status }}</span></td>
           <td>
             {% if c.sfs is not none %}
-            <div class="ts-score-bar-wrap" style="min-width:140px;">
+            <div class="ts-score-bar-wrap" style="min-width:120px;">
               <div class="ts-score-bar"><div class="ts-score-bar-fill" data-value="{{ c.sfs }}"></div></div>
               <span class="ts-score-value">{{ "%.4f"|format(c.sfs) }}</span>
             </div>
@@ -71,10 +78,20 @@
           </td>
           <td>{% if c.ler_char is not none %}{{ "%.3f"|format(c.ler_char) }}{% else %}—{% endif %}</td>
           <td>{% if c.ler_token is not none %}{{ "%.3f"|format(c.ler_token) }}{% else %}—{% endif %}</td>
+          <td style="font-variant-numeric:tabular-nums; font-weight:{% if c.score_rank == 1 %}600{% else %}normal{% endif %};">
+            {% if c.score_absolute is not none %}{{ "%.4f"|format(c.score_absolute) }}{% else %}—{% endif %}
+          </td>
+          <td style="font-variant-numeric:tabular-nums;">
+            {% if c.score_rank is not none %}
+              {% if c.score_rank == 1 %}<span class="ts-badge ts-badge-approved">#1</span>
+              {% elif c.magi_required %}<span class="ts-badge ts-badge-warning">#{{ c.score_rank }}</span>
+              {% else %}#{{ c.score_rank }}{% endif %}
+            {% else %}—{% endif %}
+          </td>
           <td>
             <div style="display:flex; gap:.3rem; flex-wrap:wrap;">
               <form method="post" action="{{ url_for('translation.score_translation', candidate_id=c.id) }}">
-                <button class="ts-btn ts-btn-warning ts-btn-sm">Score SFS</button>
+                <button class="ts-btn ts-btn-warning ts-btn-sm" data-loading="Scoring…">Score SFS</button>
               </form>
               {% if c.status != 'approved' %}
               <form method="post" action="{{ url_for('translation.approve_translation', candidate_id=c.id) }}">
@@ -98,10 +115,272 @@
     </table>
   </div>
 </div>
+
+<!-- MAGI Results card -->
+{% if magi_results %}
+{% set has_judges = magi_results | selectattr('magi_judges') | list | length > 0 %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header" style="gap:.75rem;">
+    <span class="ts-card-title">MAGI Selection Results</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:.5rem;">
+      {{ magi_results|length }} candidati &nbsp;·&nbsp;
+      Score = SFS − 0.5·PEI − 0.5·|LER−1| &nbsp;·&nbsp;
+      MAGI? = rank &gt; max(1, ⌊n/4⌋)
+    </span>
+    <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;" onclick="openMAGIModal()">Ricalcola</button>
+  </div>
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Language</th>
+          <th>Status</th>
+          <th title="Semantic Fidelity Score">SFS</th>
+          <th title="Length Expansion Ratio (char)">LER</th>
+          <th title="MAGI Selection Score">Score</th>
+          <th title="Rank percentile (1.0 = best)">%ile</th>
+          <th title="LLM judge panel required">MAGI?</th>
+          {% if has_judges %}
+          <th title="Balthasar (judge 1)">B</th>
+          <th title="Caspar (judge 2)">C</th>
+          <th title="Melchior (judge 3)">M</th>
+          <th title="Consensus score (mean of judges)">Consensus</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in magi_results %}
+        <tr{% if s.score_rank == 1 %} style="background:rgba(var(--ts-accent-rgb,34,197,94),.08);"{% endif %}>
+          <td>
+            {% if s.score_rank == 1 %}<span class="ts-badge ts-badge-approved">#1 ★</span>
+            {% elif s.magi_required %}<span class="ts-badge ts-badge-warning">#{{ s.score_rank }}</span>
+            {% else %}#{{ s.score_rank }}{% endif %}
+          </td>
+          <td><strong>{{ s.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ s.language_code }})</span></td>
+          <td><span class="ts-badge ts-badge-{{ s.status }}">{{ s.status }}</span></td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(s.sfs) if s.sfs is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.3f"|format(s.ler_char) if s.ler_char is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums; font-weight:{% if s.score_rank == 1 %}600{% else %}normal{% endif %};">
+            {{ "%.4f"|format(s.score_absolute) if s.score_absolute is not none else '—' }}
+          </td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.0f"|format(s.score_rank_pct * 100) if s.score_rank_pct is not none else '—' }}%</td>
+          <td>
+            {% if s.magi_required %}<span class="ts-badge ts-badge-warning">sì</span>
+            {% else %}<span class="ts-badge ts-badge-approved">no</span>{% endif %}
+          </td>
+          {% if has_judges %}
+          {% set jj = s.magi_judges or {} %}
+          <td style="font-variant-numeric:tabular-nums; font-size:.78rem;">
+            {% if jj.balthasar and jj.balthasar.score is not none %}{{ "%.2f"|format(jj.balthasar.score) }}
+            {% elif jj.balthasar and jj.balthasar.error %}<span title="{{ jj.balthasar.error }}" style="color:var(--ts-error,#ef4444);">err</span>
+            {% else %}—{% endif %}
+          </td>
+          <td style="font-variant-numeric:tabular-nums; font-size:.78rem;">
+            {% if jj.caspar and jj.caspar.score is not none %}{{ "%.2f"|format(jj.caspar.score) }}
+            {% elif jj.caspar and jj.caspar.error %}<span title="{{ jj.caspar.error }}" style="color:var(--ts-error,#ef4444);">err</span>
+            {% else %}—{% endif %}
+          </td>
+          <td style="font-variant-numeric:tabular-nums; font-size:.78rem;">
+            {% if jj.melchior and jj.melchior.score is not none %}{{ "%.2f"|format(jj.melchior.score) }}
+            {% elif jj.melchior and jj.melchior.error %}<span title="{{ jj.melchior.error }}" style="color:var(--ts-error,#ef4444);">err</span>
+            {% else %}—{% endif %}
+          </td>
+          <td style="font-variant-numeric:tabular-nums;">
+            {% if s.magi_score is not none %}
+              {{ "%.3f"|format(s.magi_score) }}
+              {% if s.magi_disagreement %}<span title="I giudici non concordano (stdev > 0.15)" style="color:var(--ts-warning,#f59e0b); margin-left:.2rem;">↯</span>{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:.72rem; color:var(--ts-text-muted); padding:.4rem 1rem .5rem;">
+    λ={{ magi_results[0].lambda_used if magi_results else '0.5' }} &nbsp;·&nbsp;
+    ν={{ magi_results[0].nu_used if magi_results else '0.5' }} &nbsp;·&nbsp;
+    Calcolato: {{ magi_results[0].computed_at if magi_results else '—' }}
+    {% if has_judges %}&nbsp;·&nbsp; ↯ = disaccordo tra giudici (stdev &gt; 0.15){% endif %}
+  </p>
+</div>
+{% endif %}
+
 {% else %}
 <div class="ts-empty">
   <div class="ts-empty-title">No candidates yet</div>
   <a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary" style="margin-top:.75rem;">Add Translation</a>
 </div>
 {% endif %}
+
+<!-- MAGI System Modal -->
+{% if candidates %}
+<div id="magi-modal" class="ts-modal">
+  <div class="ts-modal-content" style="max-width:760px; width:95%;">
+    <div class="ts-modal-header">
+      <div>
+        <h2 class="ts-modal-title">MAGI System</h2>
+        <div style="font-size:.8rem; color:var(--ts-text-muted); margin-top:.2rem;">
+          Score = SFS − λ·PEI − ν·|LER−1| &nbsp;·&nbsp; λ=0.5, ν=0.5
+        </div>
+      </div>
+      <button class="ts-modal-close" onclick="closeMAGIModal()">&times;</button>
+    </div>
+    <form method="post" action="{{ url_for('translation.compute_selection_scores', prompt_id=prompt.id) }}">
+      <input type="hidden" name="magi_candidate_ids" id="magi-selected-ids" value="">
+      <div class="ts-modal-body" style="display:flex; flex-direction:column; gap:1.25rem;">
+
+        <!-- Candidate selector -->
+        <div>
+          <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.6rem;">
+            <span style="font-weight:600; font-size:.9rem;">Candidati da includere</span>
+            <div style="display:flex; gap:.3rem; margin-left:auto;">
+              <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('all')">Tutti</button>
+              <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('non-rejected')">Non rifiutati</button>
+              <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('approved')">Solo approvati</button>
+            </div>
+          </div>
+          <div class="ts-table-wrap" style="max-height:220px; overflow-y:auto;">
+            <table class="ts-table">
+              <thead>
+                <tr>
+                  <th style="width:32px;"><input type="checkbox" id="magi-select-all" onchange="magiSelectAll(this)"></th>
+                  <th>Lingua</th><th>Status</th><th>SFS</th><th>LER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in candidates %}
+                <tr data-status="{{ c.status }}">
+                  <td><input type="checkbox" class="magi-cand-check" data-cid="{{ c.id }}"
+                             {% if c.status != 'rejected' %}checked{% endif %}
+                             onchange="magiUpdateIds()"></td>
+                  <td><strong>{{ c.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ c.language_code }})</span></td>
+                  <td><span class="ts-badge ts-badge-{{ c.status }}">{{ c.status }}</span></td>
+                  <td style="font-size:.82rem;">{{ "%.4f"|format(c.sfs) if c.sfs is not none else '—' }}</td>
+                  <td style="font-size:.82rem;">{{ "%.3f"|format(c.ler_char) if c.ler_char is not none else '—' }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div style="font-size:.75rem; color:var(--ts-text-muted); margin-top:.3rem;">
+            Solo i candidati con SFS calcolato contribuiranno al ranking.
+          </div>
+        </div>
+
+        <!-- Phase 2 judges -->
+        <div style="border-top:1px solid var(--ts-border); padding-top:1rem;">
+          <div style="display:flex; align-items:center; gap:.75rem; margin-bottom:.75rem;">
+            <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer; font-weight:600; font-size:.9rem;">
+              <input type="checkbox" id="force-magi-toggle" name="force_magi" value="1" onchange="toggleJudges(this)">
+              Attiva Phase 2 — Panel dei giudici MAGI
+            </label>
+          </div>
+          <div id="judges-section" style="display:none; padding:.75rem; background:var(--ts-surface-2); border-radius:var(--ts-radius); border:1px solid var(--ts-border);">
+            <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.75rem;">
+              Seleziona tre modelli come giudici. Ogni giudice valuterà indipendentemente i candidati
+              e assegnerà uno score 0–1. Il consensus è la media; ↯ segnala disaccordo (stdev &gt; 0.15).
+              <br>Se non forzato, solo i candidati con MAGI?=sì vengono sottoposti al panel.
+            </p>
+            {% if all_models %}
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:.75rem;">
+              <div>
+                <label class="ts-label" style="font-size:.8rem;">Balthasar (giudice 1)</label>
+                <select class="ts-select" name="judge_balthasar" style="font-size:.82rem;">
+                  <option value="">— scegli modello —</option>
+                  {% for m in all_models %}
+                  <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div>
+                <label class="ts-label" style="font-size:.8rem;">Caspar (giudice 2)</label>
+                <select class="ts-select" name="judge_caspar" style="font-size:.82rem;">
+                  <option value="">— scegli modello —</option>
+                  {% for m in all_models %}
+                  <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div>
+                <label class="ts-label" style="font-size:.8rem;">Melchior (giudice 3)</label>
+                <select class="ts-select" name="judge_melchior" style="font-size:.82rem;">
+                  <option value="">— scegli modello —</option>
+                  {% for m in all_models %}
+                  <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            {% else %}
+            <p style="color:var(--ts-text-muted); font-size:.82rem;">Nessun modello configurato. Vai in Settings per aggiungerne.</p>
+            {% endif %}
+          </div>
+        </div>
+
+      </div><!-- modal-body -->
+      <div class="ts-modal-footer" style="display:flex; justify-content:flex-end; gap:.5rem; padding:1rem 1.5rem; border-top:1px solid var(--ts-border);">
+        <button type="button" class="ts-btn ts-btn-secondary" onclick="closeMAGIModal()">Annulla</button>
+        <button type="submit" class="ts-btn ts-btn-primary" onclick="magiUpdateIds()" data-loading="Calcolo in corso…">Calcola MAGI Scores</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Modal open/close
+  function openMAGIModal() {
+    magiUpdateIds();
+    document.getElementById('magi-modal').classList.add('active');
+  }
+  function closeMAGIModal() {
+    document.getElementById('magi-modal').classList.remove('active');
+  }
+  window.addEventListener('click', e => {
+    const m = document.getElementById('magi-modal');
+    if (e.target === m) closeMAGIModal();
+  });
+
+  // Candidate selection
+  function magiUpdateIds() {
+    const checks = Array.from(document.querySelectorAll('.magi-cand-check:checked'));
+    document.getElementById('magi-selected-ids').value = checks.map(c => c.dataset.cid).join(',');
+    const all = document.querySelectorAll('.magi-cand-check');
+    const sa = document.getElementById('magi-select-all');
+    if (sa) {
+      sa.checked = checks.length === all.length;
+      sa.indeterminate = checks.length > 0 && checks.length < all.length;
+    }
+  }
+
+  function magiSelectAll(el) {
+    document.querySelectorAll('.magi-cand-check').forEach(c => { c.checked = el.checked; });
+    magiUpdateIds();
+  }
+
+  function magiFilter(mode) {
+    document.querySelectorAll('#magi-modal tbody tr').forEach(row => {
+      const status = row.dataset.status;
+      const check = row.querySelector('.magi-cand-check');
+      if (!check) return;
+      if (mode === 'all') check.checked = true;
+      else if (mode === 'non-rejected') check.checked = status !== 'rejected';
+      else if (mode === 'approved') check.checked = status === 'approved';
+    });
+    magiUpdateIds();
+  }
+
+  // Judge toggle
+  function toggleJudges(el) {
+    document.getElementById('judges-section').style.display = el.checked ? 'block' : 'none';
+  }
+
+  // Init
+  magiUpdateIds();
+</script>
 {% endblock %}

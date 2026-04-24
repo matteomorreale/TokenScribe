@@ -6,8 +6,8 @@ Author: Matteo Morreale
 import json
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
-from app.models import PromptModel, TranslationModel, StudyModel, SettingsModel
-from app.services import ScoringService, LLMService
+from app.models import PromptModel, TranslationModel, StudyModel, SettingsModel, ExperimentModel, SelectionScoreModel
+from app.services import ScoringService, LLMService, MAGIService
 
 translation_bp = Blueprint("translation", __name__)
 
@@ -62,12 +62,22 @@ def list_translations(prompt_id: int):
     study = _sm().get_by_id(prompt["study_id"])
     candidates = _tm().get_candidates_by_prompt(prompt_id)
     languages = _tm().get_all_languages()
+    all_models = ExperimentModel(current_app.config["DB"]).get_all_models()
+    magi_scores = SelectionScoreModel(current_app.config["DB"]).get_by_prompt(prompt_id)
+    magi_by_cid = {s["candidate_id"]: s for s in magi_scores}
+    for c in candidates:
+        ms = magi_by_cid.get(c["id"])
+        c["score_absolute"] = ms["score_absolute"] if ms else None
+        c["score_rank"] = ms["score_rank"] if ms else None
+        c["magi_required"] = bool(ms["magi_required"]) if ms else None
     return render_template(
         "translations/list.html",
         prompt=prompt,
         study=study,
         candidates=candidates,
         languages=languages,
+        all_models=all_models,
+        magi_results=magi_scores,
     )
 
 
@@ -494,6 +504,85 @@ def score_translation(candidate_id: int):
     return redirect(
         url_for("translation.list_translations", prompt_id=candidate["prompt_id"])
     )
+
+
+@translation_bp.route("/prompts/<int:prompt_id>/selection-scores", methods=["POST"])
+def compute_selection_scores(prompt_id: int):
+    all_candidates = _tm().get_candidates_by_prompt(prompt_id)
+
+    # Filter by IDs submitted from the modal
+    selected_raw = request.form.get("magi_candidate_ids", "").strip()
+    if selected_raw:
+        selected_ids = {int(x) for x in selected_raw.split(",") if x.strip().isdigit()}
+        pool = [c for c in all_candidates if c["id"] in selected_ids]
+    else:
+        pool = all_candidates
+
+    scored = [c for c in pool if c.get("sfs") is not None]
+    if not scored:
+        flash("Nessun candidato con SFS nella selezione. Scorifica prima le traduzioni.", "warning")
+        return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
+
+    prompt = _pm().get_by_id(prompt_id)
+    em = ExperimentModel(current_app.config["DB"])
+    pei = em.get_latest_pei_for_prompt(prompt_id) or 0.0
+
+    for c in scored:
+        c["prompt_id"] = prompt_id
+        c["pei"] = pei
+
+    result = _scorer.compute_selection_scores(scored)
+    ssm = SelectionScoreModel(current_app.config["DB"])
+    ssm.upsert_scores(result)
+
+    # Phase 2 — MAGI judge panel
+    force_magi = request.form.get("force_magi") == "1"
+    judge_ids = [
+        request.form.get("judge_balthasar", type=int),
+        request.form.get("judge_caspar", type=int),
+        request.form.get("judge_melchior", type=int),
+    ]
+    judge_models = [em.get_model_by_id(mid) for mid in judge_ids if mid]
+    judge_models = [m for m in judge_models if m]
+
+    panel_ran = 0
+    if len(judge_models) == 3:
+        panel_candidates = result if force_magi else [c for c in result if c.get("magi_required")]
+        if panel_candidates:
+            settings = _setm().get_all()
+            llm = LLMService(settings)
+            magi_svc = MAGIService()
+            original = prompt["base_text"] if prompt else ""
+            for c in panel_candidates:
+                panel = magi_svc.run_panel(
+                    original=original,
+                    translation=c.get("text", ""),
+                    language=c.get("language_name", ""),
+                    sfs=c.get("sfs") or 0.0,
+                    ler_char=c.get("ler_char") or 1.0,
+                    llm_service=llm,
+                    judge_models=judge_models,
+                )
+                ssm.update_magi_result(
+                    candidate_id=c["id"],
+                    magi_score=panel["magi_score"],
+                    magi_disagreement=panel["magi_disagreement"],
+                    magi_judges=panel["judges"],
+                )
+                panel_ran += 1
+
+    excluded = len(pool) - len(scored)
+    msg = f"MAGI Phase 1: {len(result)} candidati classificati (λ=0.5, ν=0.5, PEI={pei:.4f})"
+    if excluded:
+        msg += f" — {excluded} esclusi (nessun SFS)"
+    if panel_ran:
+        msg += f" · Phase 2: {panel_ran} candidati valutati dai giudici"
+    elif len(judge_models) == 3 and not panel_ran:
+        msg += " · Phase 2: nessun candidato richiede i giudici"
+    elif force_magi and len(judge_models) < 3:
+        msg += " · Phase 2: seleziona 3 modelli giudice per attivare il panel"
+    flash(msg, "success")
+    return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
 
 
 @translation_bp.route("/translations/<int:candidate_id>/approve", methods=["POST"])

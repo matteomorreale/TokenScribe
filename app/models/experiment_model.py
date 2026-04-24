@@ -70,6 +70,46 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def snapshot_translations(self, run_id: int, study_id: int):
+        """Freeze the currently approved translations for this run.
+
+        Must be called before any LLM calls so the snapshot reflects exactly
+        which candidate was approved at run time, immune to future re-approvals.
+        """
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO run_translation_snapshot
+                          (run_id, prompt_id, language_id, candidate_id)
+                   SELECT ?, at.prompt_id, at.language_id, at.candidate_id
+                   FROM approved_translations at
+                   JOIN prompts p ON p.id = at.prompt_id
+                   WHERE p.study_id = ?""",
+                (run_id, study_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_run(self, run_id: int):
+        conn = self.db.get_connection()
+        try:
+            conn.execute("DELETE FROM experiment_runs WHERE id=?", (run_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_runs_bulk(self, run_ids: list):
+        if not run_ids:
+            return
+        conn = self.db.get_connection()
+        try:
+            placeholders = ",".join("?" * len(run_ids))
+            conn.execute(f"DELETE FROM experiment_runs WHERE id IN ({placeholders})", run_ids)
+            conn.commit()
+        finally:
+            conn.close()
+
     # --- Token Results (immutable) ---
 
     def insert_token_result(
@@ -166,6 +206,7 @@ class ExperimentModel:
                 vot = d.get("visible_output_tokens") or 0
                 arot = d.get("api_reported_output_tokens") or 0
                 cpo = d.get("cost_per_output_token") or 0.0
+                d["visible_output_tokens"] = vot
                 d["reasoning_tokens"] = max(0, arot - vot)
                 d["cost_visible_only"] = round(vot * cpo, 8)
                 d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
@@ -210,6 +251,21 @@ class ExperimentModel:
             )
             conn.commit()
             return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_latest_pei_for_prompt(self, prompt_id: int):
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                """SELECT pr.pei FROM pei_results pr
+                   JOIN experiment_runs er ON er.id = pr.run_id
+                   WHERE pr.prompt_id = ?
+                   ORDER BY er.timestamp DESC
+                   LIMIT 1""",
+                (prompt_id,),
+            ).fetchone()
+            return float(row["pei"]) if row else None
         finally:
             conn.close()
 
@@ -319,21 +375,30 @@ class ExperimentModel:
         conn = self.db.get_connection()
         try:
             rows = conn.execute(
-                """SELECT DISTINCT at.prompt_id, at.language_id,
+                """SELECT DISTINCT snap.prompt_id, snap.language_id,
                           l.name  AS language_name,
                           l.code  AS language_code,
                           p.base_text,
                           ts.dsf, ts.rtf, ts.sfs, ts.ler_char, ts.ler_token,
-                          ts.computed_at
+                          ts.computed_at,
+                          ssr.score_absolute AS magi_score_absolute,
+                          ssr.score_rank     AS magi_score_rank,
+                          ssr.score_rank_pct AS magi_score_rank_pct,
+                          ssr.magi_required,
+                          ssr.magi_score,
+                          ssr.magi_disagreement,
+                          ssr.magi_judges
                    FROM token_results tr
-                   JOIN approved_translations at
-                        ON at.prompt_id = tr.prompt_id
-                       AND at.language_id = tr.language_id
-                   JOIN translation_scores ts ON ts.candidate_id = at.candidate_id
-                   JOIN languages l ON l.id = at.language_id
-                   JOIN prompts p ON p.id = at.prompt_id
+                   JOIN run_translation_snapshot snap
+                        ON snap.run_id = tr.run_id
+                       AND snap.prompt_id = tr.prompt_id
+                       AND snap.language_id = tr.language_id
+                   JOIN translation_scores ts ON ts.candidate_id = snap.candidate_id
+                   JOIN languages l ON l.id = snap.language_id
+                   JOIN prompts p ON p.id = snap.prompt_id
+                   LEFT JOIN selection_score_results ssr ON ssr.candidate_id = snap.candidate_id
                    WHERE tr.run_id = ?
-                   ORDER BY at.prompt_id, l.name""",
+                   ORDER BY snap.prompt_id, l.name""",
                 (run_id,),
             ).fetchall()
             return [dict(r) for r in rows]

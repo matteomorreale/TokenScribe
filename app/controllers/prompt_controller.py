@@ -4,7 +4,7 @@ Author: Matteo Morreale
 """
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
-from app.models import PromptModel, StudyModel, TranslationModel
+from app.models import PromptModel, StudyModel, TranslationModel, SelectionScoreModel
 from app.services import ScoringService
 
 prompt_bp = Blueprint("prompt", __name__)
@@ -22,6 +22,10 @@ def _sm() -> StudyModel:
 
 def _tm() -> TranslationModel:
     return TranslationModel(current_app.config["DB"])
+
+
+def _ssm() -> SelectionScoreModel:
+    return SelectionScoreModel(current_app.config["DB"])
 
 
 @prompt_bp.route("/studies/<int:study_id>/prompts")
@@ -187,6 +191,8 @@ def detail_prompt(prompt_id: int):
             c["pei_morphology_group_delta"] = round(float(sim_group_pei.get("pei") or 0.0) - baseline_group_pei, 6)
             c["pei_morphology_group_band"] = _scorer.pei_band(float(sim_group_pei.get("pei") or 0.0))
 
+    magi_readiness = _ssm().get_readiness_by_prompts([prompt_id]).get(prompt_id, {})
+
     return render_template(
         "prompts/detail.html",
         prompt=prompt,
@@ -199,6 +205,7 @@ def detail_prompt(prompt_id: int):
         pei_count=len(pei_texts),
         pei_script_groups=pei_script_groups,
         pei_morph_groups=pei_morph_groups,
+        magi_readiness=magi_readiness,
     )
 
 

@@ -27,6 +27,30 @@
   <div class="ts-prompt-block">{{ prompt.base_text }}</div>
 </div>
 
+{% set r = magi_readiness %}
+{% set rstatus = r.get('status', 'red') if r else 'red' %}
+<div class="ts-card" style="margin-bottom:1.25rem; border-left:3px solid {% if rstatus == 'green' %}var(--ts-success){% elif rstatus == 'yellow' %}var(--ts-warning){% else %}var(--ts-error){% endif %};">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Translation Set Readiness</span>
+    <span class="ts-badge {% if rstatus == 'green' %}ts-badge-approved{% elif rstatus == 'yellow' %}ts-badge-warning{% else %}ts-badge-rejected{% endif %}">
+      {% if rstatus == 'green' %}Ready{% elif rstatus == 'yellow' %}Needs attention{% else %}Not ready{% endif %}
+    </span>
+    <a href="{{ url_for('translation.list_translations', prompt_id=prompt.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">MAGI System →</a>
+  </div>
+  <div style="display:flex; gap:2rem; flex-wrap:wrap; font-size:.82rem; padding:.25rem 0;">
+    <div><span style="color:var(--ts-text-muted);">Approved</span> <strong>{{ r.get('approved_count', 0) if r else 0 }}</strong></div>
+    <div><span style="color:var(--ts-text-muted);">Scored (SFS)</span> <strong>{{ r.get('scored_count', 0) if r else 0 }}</strong></div>
+    <div><span style="color:var(--ts-text-muted);">MAGI scored</span> <strong>{{ r.get('magi_count', 0) if r else 0 }}</strong></div>
+    <div><span style="color:var(--ts-text-muted);">Needs judge</span> <strong>{{ r.get('magi_required_count', 0) if r else 0 }}</strong></div>
+    <div><span style="color:var(--ts-text-muted);">Judge results</span> <strong>{{ r.get('judge_count', 0) if r else 0 }}</strong></div>
+  </div>
+  {% if rstatus == 'red' %}
+  <p style="font-size:.8rem; color:var(--ts-error); margin-top:.5rem;">No approved translations. Approve at least one before running an experiment.</p>
+  {% elif rstatus == 'yellow' %}
+  <p style="font-size:.8rem; color:var(--ts-warning); margin-top:.5rem;">{% if (r.get('scored_count', 0) if r else 0) < (r.get('approved_count', 0) if r else 0) %}Not all approved translations have SFS scores. {% endif %}{% if (r.get('magi_count', 0) if r else 0) == 0 %}MAGI Phase 1 not computed. {% endif %}{% if (r.get('magi_required_count', 0) if r else 0) > 0 %}{{ r.get('magi_required_count', 0) }} candidate(s) require MAGI judge review.{% endif %}</p>
+  {% endif %}
+</div>
+
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header">
     <span class="ts-card-title">AI Translate (OpenAI gpt-5.4)</span>
@@ -71,7 +95,7 @@
         </div>
         <div class="ts-input-hint">SFS è per singola traduzione; PEI è per l’intero set multilingua. Range: &lt;0.20 ottimo, 0.20–0.35 plausibile, &gt;0.35 alto (accettabile se cross-script).</div>
         <div style="display:flex; justify-content:flex-end; margin-top:1rem;">
-          <button class="ts-btn ts-btn-primary">Genera traduzioni</button>
+          <button class="ts-btn ts-btn-primary" data-loading="Generazione in corso…">Genera traduzioni</button>
         </div>
       </div>
     </div>
@@ -303,7 +327,7 @@
                 </div>
               </details>
               <form method="post" action="{{ url_for('translation.score_translation', candidate_id=c.id) }}">
-                <button class="ts-btn ts-btn-warning ts-btn-sm">Score</button>
+                <button class="ts-btn ts-btn-warning ts-btn-sm" data-loading="Scoring…">Score</button>
               </form>
               {% if c.status != 'approved' %}
               <form method="post" action="{{ url_for('translation.approve_translation', candidate_id=c.id) }}">

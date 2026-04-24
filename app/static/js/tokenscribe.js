@@ -75,6 +75,18 @@ document.addEventListener("DOMContentLoaded", () => {
     updateState();
   });
 
+  /* ── Loading state on form submit ─────────────────────────────── */
+  document.querySelectorAll("form").forEach((form) => {
+    form.addEventListener("submit", () => {
+      form.querySelectorAll("button[data-loading]").forEach((btn) => {
+        const label = btn.dataset.loading || "Elaborazione…";
+        btn.disabled = true;
+        btn.classList.add("ts-btn-loading");
+        btn.textContent = label;
+      });
+    });
+  });
+
   /* ── Active nav item ───────────────────────────────────────────── */
   const path = window.location.pathname;
   document.querySelectorAll(".ts-nav-item").forEach((item) => {

@@ -114,6 +114,18 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        try:
+            cur = conn.execute("PRAGMA table_info(selection_score_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "magi_score" not in columns:
+                conn.execute("ALTER TABLE selection_score_results ADD COLUMN magi_score REAL")
+            if "magi_disagreement" not in columns:
+                conn.execute("ALTER TABLE selection_score_results ADD COLUMN magi_disagreement INTEGER")
+            if "magi_judges" not in columns:
+                conn.execute("ALTER TABLE selection_score_results ADD COLUMN magi_judges TEXT")
+        except sqlite3.Error:
+            pass
+
     def _create_tables(self, conn: sqlite3.Connection):
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS writing_systems (
@@ -244,6 +256,29 @@ class DatabaseManager:
                 pei_delta_vs_group  REAL,
                 pei_band           TEXT,
                 computed_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS selection_score_results (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id   INTEGER NOT NULL UNIQUE REFERENCES translation_candidates(id) ON DELETE CASCADE,
+                prompt_id      INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+                score_absolute REAL,
+                score_rank     INTEGER,
+                score_rank_pct REAL,
+                magi_required  INTEGER NOT NULL DEFAULT 0,
+                lambda_used    REAL,
+                nu_used        REAL,
+                computed_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS run_translation_snapshot (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id       INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                prompt_id    INTEGER NOT NULL REFERENCES prompts(id),
+                language_id  INTEGER NOT NULL REFERENCES languages(id),
+                candidate_id INTEGER NOT NULL REFERENCES translation_candidates(id),
+                snapshotted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                UNIQUE(run_id, prompt_id, language_id)
             );
 
             CREATE TABLE IF NOT EXISTS settings (

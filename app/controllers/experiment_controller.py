@@ -7,7 +7,7 @@ from flask import (
     Blueprint, render_template, request, redirect,
     url_for, flash, current_app, jsonify
 )
-from app.models import StudyModel, ExperimentModel, PromptModel, TranslationModel, SettingsModel
+from app.models import StudyModel, ExperimentModel, PromptModel, TranslationModel, SettingsModel, SelectionScoreModel
 from app.services import LLMService, ScoringService
 
 experiment_bp = Blueprint("experiment", __name__)
@@ -35,10 +35,26 @@ def _stm() -> SettingsModel:
     return SettingsModel(current_app.config["DB"])
 
 
+def _ssm() -> SelectionScoreModel:
+    return SelectionScoreModel(current_app.config["DB"])
+
+
 @experiment_bp.route("/experiments")
 def list_experiments():
     runs = _em().get_all_runs()
     return render_template("experiments/list.html", runs=runs)
+
+
+@experiment_bp.route("/experiments/<int:run_id>/delete", methods=["POST"])
+def delete_experiment(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+    _em().delete_run(run_id)
+    flash(f"Run #{run_id} deleted.", "success")
+    next_url = request.form.get("next") or url_for("experiment.list_experiments")
+    return redirect(next_url)
 
 
 @experiment_bp.route("/studies/<int:study_id>/experiments/new", methods=["GET", "POST"])
@@ -49,18 +65,28 @@ def new_experiment(study_id: int):
         return redirect(url_for("study.list_studies"))
     models = _em().get_all_models()
     prompts = _pm().get_by_study(study_id)
+    if request.method == "GET":
+        prompt_ids = [p["id"] for p in prompts]
+        readiness = _ssm().get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
+        return render_template(
+            "experiments/new.html",
+            study=study, models=models, prompts=prompts, readiness=readiness
+        )
     if request.method == "POST":
         selected_model_ids = request.form.getlist("model_ids", type=int)
         notes = request.form.get("notes", "").strip()
         if not selected_model_ids:
             flash("Select at least one model.", "error")
+            prompt_ids = [p["id"] for p in prompts]
+            readiness = _ssm().get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
             return render_template(
                 "experiments/new.html",
-                study=study, models=models, prompts=prompts
+                study=study, models=models, prompts=prompts, readiness=readiness
             )
-        # Create run
+        # Create run and immediately freeze the approved translations
         em = _em()
         run_id = em.create_run(study_id, notes)
+        em.snapshot_translations(run_id, study_id)
         settings = _stm().get_all()
         llm = LLMService(settings)
 

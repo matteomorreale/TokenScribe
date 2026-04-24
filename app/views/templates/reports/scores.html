@@ -132,6 +132,57 @@
 </div>
 {% endif %}
 
+{% if selection_scores_by_prompt %}
+<div class="ts-card" style="margin-top:1.5rem;">
+  <div class="ts-card-header"><span class="ts-card-title">MAGI Selection Scores</span></div>
+  <p style="font-size:.8rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
+    Score = SFS &minus; 0.5&middot;PEI &minus; 0.5&middot;|LER&minus;1| &nbsp;&nbsp;|&nbsp;&nbsp;
+    MAGI? = rank &gt; max(1, &lfloor;n/4&rfloor;) &nbsp;&nbsp;|&nbsp;&nbsp;
+    PEI from most recent experiment run for this prompt.
+  </p>
+  {% for prompt_id, scores in selection_scores_by_prompt.items() %}
+  <div style="padding:.75rem 1rem .25rem; border-top:1px solid var(--ts-border);">
+    <div style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.4rem;">
+      Prompt #{{ prompt_id }} &nbsp;
+      <span style="font-size:.75rem;">({{ scores|length }} candidates, λ={{ scores[0].lambda_used if scores else '0.5' }}, ν={{ scores[0].nu_used if scores else '0.5' }})</span>
+    </div>
+    <div class="ts-table-wrap">
+      <table class="ts-table">
+        <thead>
+          <tr>
+            <th>Rank</th><th>Language</th><th>SFS</th><th>LER chr</th>
+            <th title="MAGI Selection Score = SFS − 0.5·PEI − 0.5·|LER−1|">Score</th>
+            <th title="Rank percentile (1.0 = best)">Pct</th>
+            <th>Status</th>
+            <th title="LLM panel required when rank > floor(n/4)">MAGI?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in scores %}
+          <tr>
+            <td style="font-variant-numeric:tabular-nums;">#{{ s.score_rank }}</td>
+            <td><strong>{{ s.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ s.language_code }})</span></td>
+            <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(s.sfs) if s.sfs is not none else '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums;">{{ "%.3f"|format(s.ler_char) if s.ler_char is not none else '—' }}</td>
+            <td style="font-variant-numeric:tabular-nums; font-weight:{% if s.score_rank == 1 %}600{% else %}normal{% endif %};">
+              {{ "%.4f"|format(s.score_absolute) if s.score_absolute is not none else '—' }}
+            </td>
+            <td style="font-variant-numeric:tabular-nums;">{{ "%.2f"|format(s.score_rank_pct) if s.score_rank_pct is not none else '—' }}</td>
+            <td><span class="ts-badge ts-badge-{{ s.status }}">{{ s.status }}</span></td>
+            <td>
+              {% if s.magi_required %}<span class="ts-badge ts-badge-warning">yes</span>
+              {% else %}<span class="ts-badge ts-badge-approved">no</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% elif selected_run %}
 <div class="ts-empty"><div class="ts-empty-title">No results for this run</div></div>
 {% else %}

@@ -306,6 +306,28 @@ a:hover { color: var(--ts-accent-2); }
 .ts-btn-sm { padding: 0.3rem 0.7rem; font-size: 0.78rem; }
 .ts-btn-lg { padding: 0.7rem 1.4rem; font-size: 0.95rem; }
 
+/* ── Button loading state ────────────────────────────────────────── */
+@keyframes ts-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.ts-btn-loading {
+  pointer-events: none;
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+.ts-btn-loading::before {
+  content: '';
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: ts-spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+
 /* ── Forms ───────────────────────────────────────────────────────── */
 .ts-form-group { margin-bottom: 1.25rem; }
 

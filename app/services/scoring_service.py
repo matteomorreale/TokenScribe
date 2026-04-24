@@ -11,7 +11,7 @@ Computes:
 
 import math
 import statistics
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 
 class ScoringService:
@@ -167,3 +167,44 @@ class ScoringService:
         if v <= 0.35:
             return "plausibile"
         return "alto"
+
+    # ------------------------------------------------------------------
+    # MAGI Selection Score (Phase 1)
+    # ------------------------------------------------------------------
+
+    LAMBDA = 0.5  # range_SFS / range_PEI = 0.10 / 0.20
+    NU = 0.5      # LER penalty weight (symmetric with LAMBDA)
+
+    def compute_selection_scores(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Level 1: score_absolute = SFS - LAMBDA*PEI - NU*|LER_char - 1|
+        Level 2: rank by score_absolute, compute score_rank_pct
+        Divergence: magi_required = True if rank > max(1, floor(n/4))
+
+        candidates: list of dicts with keys id, prompt_id, sfs, pei, ler_char
+        Mutates and returns the same list.
+        """
+        n = len(candidates)
+        if n == 0:
+            return []
+
+        lam = self.LAMBDA
+        nu = self.NU
+
+        for c in candidates:
+            sfs = float(c.get("sfs") or 0.0)
+            pei = float(c.get("pei") or 0.0)
+            ler = float(c.get("ler_char") or 1.0)
+            c["score_absolute"] = round(sfs - lam * pei - nu * abs(ler - 1.0), 6)
+
+        sorted_cands = sorted(candidates, key=lambda x: x["score_absolute"], reverse=True)
+        divergence_threshold = max(1, math.floor(n / 4))
+
+        for rank, c in enumerate(sorted_cands, 1):
+            c["score_rank"] = rank
+            c["score_rank_pct"] = round(1.0 - (rank - 1) / max(n - 1, 1), 6) if n > 1 else 1.0
+            c["magi_required"] = rank > divergence_threshold
+            c["lambda_used"] = lam
+            c["nu_used"] = nu
+
+        return candidates

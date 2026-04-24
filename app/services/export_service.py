@@ -78,6 +78,12 @@ class ExportService:
             "pei_groups_morphology_group",
             "ler_char",
             "ler_token",
+            "magi_score_absolute",
+            "magi_score_rank",
+            "magi_score_rank_pct",
+            "magi_required",
+            "magi_score",
+            "magi_disagreement",
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -100,6 +106,12 @@ class ExportService:
             )
             enriched["ler_char"] = (ts_row or {}).get("ler_char")
             enriched["ler_token"] = (ts_row or {}).get("ler_token")
+            enriched["magi_score_absolute"] = (ts_row or {}).get("magi_score_absolute")
+            enriched["magi_score_rank"] = (ts_row or {}).get("magi_score_rank")
+            enriched["magi_score_rank_pct"] = (ts_row or {}).get("magi_score_rank_pct")
+            enriched["magi_required"] = (ts_row or {}).get("magi_required")
+            enriched["magi_score"] = (ts_row or {}).get("magi_score")
+            enriched["magi_disagreement"] = (ts_row or {}).get("magi_disagreement")
             writer.writerow(enriched)
         return output.getvalue()
 

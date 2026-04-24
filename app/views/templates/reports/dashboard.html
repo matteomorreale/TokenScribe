@@ -10,17 +10,32 @@
 </div>
 
 <!-- Quick export by run -->
-<div class="ts-card" style="margin-bottom:1.5rem;">
-  <div class="ts-card-header"><span class="ts-card-title">Export by Run</span></div>
+<div class="ts-card" style="margin-bottom:1.5rem;" id="runs-card">
+  <div class="ts-card-header" style="gap:.75rem; flex-wrap:wrap;">
+    <span class="ts-card-title">Export by Run</span>
+    {% if runs %}
+    <div style="margin-left:auto; display:flex; gap:.4rem;">
+      <form method="post" action="{{ url_for('report.bulk_delete_runs') }}" id="bulk-delete-form"
+            data-confirm="Delete selected runs and all their results? This cannot be undone.">
+        <input type="hidden" name="run_ids" id="bulk-run-ids" value="">
+        <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit" id="bulk-delete-btn" disabled>Delete selected</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
   {% if runs %}
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>
-        <tr><th>Run ID</th><th>Study</th><th>Timestamp</th><th>Results</th><th>Export</th></tr>
+        <tr>
+          <th style="width:36px;"><input type="checkbox" id="runs-select-all" aria-label="Select all"></th>
+          <th>Run ID</th><th>Study</th><th>Timestamp</th><th>Results</th><th>Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% for r in runs %}
         <tr>
+          <td><input type="checkbox" class="run-check" data-run-id="{{ r.id }}" aria-label="Select run {{ r.id }}"></td>
           <td>#{{ r.id }}</td>
           <td>{{ r.study_name }}</td>
           <td style="color:var(--ts-text-muted); font-size:.8rem;">{{ r.timestamp }}</td>
@@ -30,6 +45,11 @@
               <a href="{{ url_for('report.export_csv') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">CSV</a>
               <a href="{{ url_for('report.export_json') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">JSON</a>
               <a href="{{ url_for('report.scores_view') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">Scores</a>
+              <form method="post" action="{{ url_for('experiment.delete_experiment', run_id=r.id) }}"
+                    data-confirm="Delete Run #{{ r.id }} and all its results? This cannot be undone.">
+                <input type="hidden" name="next" value="{{ url_for('report.reports_dashboard') }}">
+                <button class="ts-btn ts-btn-danger ts-btn-sm">Delete</button>
+              </form>
             </div>
           </td>
         </tr>
@@ -61,4 +81,35 @@
   <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No studies yet</div></div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const selectAll = document.getElementById('runs-select-all');
+  const bulkInput = document.getElementById('bulk-run-ids');
+  const bulkBtn   = document.getElementById('bulk-delete-btn');
+  const checks    = () => Array.from(document.querySelectorAll('.run-check'));
+
+  function updateBulk() {
+    const selected = checks().filter(c => c.checked);
+    const ids = selected.map(c => c.dataset.runId).join(',');
+    if (bulkInput) bulkInput.value = ids;
+    if (bulkBtn)   bulkBtn.disabled = selected.length === 0;
+    if (selectAll) {
+      const all = checks();
+      selectAll.checked = all.length > 0 && selected.length === all.length;
+      selectAll.indeterminate = selected.length > 0 && selected.length < all.length;
+    }
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      checks().forEach(c => { c.checked = selectAll.checked; });
+      updateBulk();
+    });
+  }
+
+  checks().forEach(c => c.addEventListener('change', updateBulk));
+  updateBulk();
+</script>
 {% endblock %}

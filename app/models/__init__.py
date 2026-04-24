@@ -9,6 +9,7 @@ from .prompt_model import PromptModel
 from .translation_model import TranslationModel
 from .experiment_model import ExperimentModel
 from .settings_model import SettingsModel
+from .selection_score_model import SelectionScoreModel
 
 __all__ = [
     "DatabaseManager",
@@ -17,4 +18,5 @@ __all__ = [
     "TranslationModel",
     "ExperimentModel",
     "SettingsModel",
+    "SelectionScoreModel",
 ]
