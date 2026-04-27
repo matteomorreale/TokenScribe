@@ -97,7 +97,7 @@ selection_score_results       -- MAGI Phase 1 + Phase 2 (per candidate)
   nu_used (REAL),             -- 0.5
   magi_score (REAL),          -- mean of valid Phase 2 judge scores (NULL until Phase 2 run)
   magi_disagreement (INT 0/1),-- stdev(valid_scores) > 0.15
-  magi_judges (TEXT JSON),    -- {balthasar: {model_id, model_name, score, raw_response, error, attempts},
+  magi_judges (TEXT JSON),    -- {balthasar: {model_id, model_name, semantic_fidelity, register_match, naturalness, score, raw_response, error, attempts},
                               --  caspar:    {…},
                               --  melchior:  {…}}
                               -- NULL until Phase 2 run; deserialized in model layer before use
@@ -162,22 +162,31 @@ token_results ──> models ──> providers
   "balthasar": {
     "model_id": 3,
     "model_name": "gpt-4o-mini",
-    "score": 0.95,
-    "raw_response": "0.95",
+    "semantic_fidelity": 5,
+    "register_match": 4,
+    "naturalness": 5,
+    "score": 0.916667,
+    "raw_response": "{\"semantic_fidelity\": 5, \"register_match\": 4, \"naturalness\": 5}",
     "error": null,
     "attempts": 1
   },
   "caspar": {
     "model_id": 3,
     "model_name": "gpt-4o-mini",
+    "semantic_fidelity": null,
+    "register_match": null,
+    "naturalness": null,
     "score": null,
     "raw_response": "I believe this translation is excellent and captures...",
-    "error": "Parse failed: no valid 0–1 score found in response",
+    "error": "Parse failed: no JSON dimensions or 0–1 score found",
     "attempts": 3
   },
   "melchior": {
     "model_id": 3,
     "model_name": "gpt-4o-mini",
+    "semantic_fidelity": null,
+    "register_match": null,
+    "naturalness": null,
     "score": null,
     "raw_response": null,
     "error": "API error: Connection timeout",
