@@ -39,6 +39,13 @@
         Delimiters must remain unchanged across all languages.
       </div>
     </div>
+    <div class="ts-form-group">
+      <label class="ts-label" for="notes">Notes</label>
+      <textarea class="ts-textarea" id="notes" name="notes"
+                style="min-height:100px;"
+                placeholder="Decisioni sulle traduzioni, osservazioni metodologiche, contesto…">{{ prompt.notes if prompt else '' }}</textarea>
+      <div class="ts-input-hint">Queste note vengono incluse nei JSON delle esportazioni delle RUN che usano questo prompt.</div>
+    </div>
     <div style="display:flex; gap:.75rem; margin-top:1.5rem;">
       <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
         {{ 'Save Changes' if prompt else 'Create Prompt' }}

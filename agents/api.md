@@ -22,6 +22,8 @@ GET  /prompts/<id>                    prompt detail — includes readiness semap
 GET  /prompts/<id>/edit               edit form
 POST /prompts/<id>/edit               update prompt
 POST /prompts/<id>/delete             delete prompt
+POST /prompts/<id>/pei/refresh        recompute PEI from current approved translations and save snapshot
+POST /prompts/<id>/notes              save prompt notes field (inline form on detail page)
 ```
 
 ## Translations
@@ -41,6 +43,9 @@ POST /translations/<id>/delete                    delete candidate
 POST /prompts/<id>/translations/bulk-approve      bulk approve selected candidate_ids
 POST /prompts/<id>/translations/bulk-reject       bulk reject selected candidate_ids
 POST /prompts/<id>/translations/bulk-delete       bulk delete selected candidate_ids
+GET  /translations/<id>/edit                      edit form for existing candidate (language read-only)
+POST /translations/<id>/edit                      update candidate text
+GET  /prompts/<id>/translations/export.json       download all candidates + scores as JSON attachment
 ```
 
 ### POST /prompts/{prompt_id}/selection-scores — Form Fields
@@ -95,11 +100,12 @@ GET  /reports/studies/<id>            per-study report (model efficiency summary
 ## CSV Export Fields
 
 ```text
-run_id, prompt_id, base_text, category,
+run_id, prompt_id, base_text, category, prompt_notes,
 language_name, language_code, writing_system, script_group, morphology_group,
 model_name, provider_name,
 input_tokens, visible_output_tokens, reasoning_tokens,
-api_reported_output_tokens, ror, is_reasoning_model,
+api_reported_output_tokens, ror,
+is_reasoning_capable, reasoning_observed, reasoning_state,
 cost_visible_only, cost, visible_output_text_length,
 token_accounting_mode, source, created_at,
 pei, pei_band, script_group_count, morphology_group_count,
@@ -108,6 +114,12 @@ ler_char, ler_token,
 magi_score_absolute, magi_score_rank, magi_score_rank_pct,
 magi_required, magi_score, magi_disagreement
 ```
+
+Note: `is_reasoning_model` has been replaced by three fields:
+
+- `is_reasoning_capable` — from `models.is_reasoning` (static, per model definition)
+- `reasoning_observed` — `reasoning_tokens > REASONING_THRESHOLD` (dynamic, per run result)
+- `reasoning_state` — 4-way classification: `active` | `capable_but_inactive` | `anomaly` | `non_reasoning`
 
 Note: `magi_judges` per-judge breakdown is available in JSON export only (nested object).
 

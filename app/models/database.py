@@ -129,6 +129,32 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        try:
+            cur = conn.execute("PRAGMA table_info(models)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "is_reasoning" not in columns:
+                conn.execute("ALTER TABLE models ADD COLUMN is_reasoning INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.Error:
+            pass
+
+        try:
+            cur = conn.execute("PRAGMA table_info(prompts)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "notes" not in columns:
+                conn.execute("ALTER TABLE prompts ADD COLUMN notes TEXT DEFAULT ''")
+            if "pei_value" not in columns:
+                conn.execute("ALTER TABLE prompts ADD COLUMN pei_value REAL")
+            if "pei_cv_char" not in columns:
+                conn.execute("ALTER TABLE prompts ADD COLUMN pei_cv_char REAL")
+            if "pei_cv_word" not in columns:
+                conn.execute("ALTER TABLE prompts ADD COLUMN pei_cv_word REAL")
+            if "pei_cv_token" not in columns:
+                conn.execute("ALTER TABLE prompts ADD COLUMN pei_cv_token REAL")
+            if "pei_saved_at" not in columns:
+                conn.execute("ALTER TABLE prompts ADD COLUMN pei_saved_at TEXT")
+        except sqlite3.Error:
+            pass
+
     def _create_tables(self, conn: sqlite3.Connection):
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS writing_systems (
@@ -158,6 +184,7 @@ class DatabaseManager:
                 study_id   INTEGER NOT NULL REFERENCES studies(id) ON DELETE CASCADE,
                 base_text  TEXT NOT NULL,
                 category   TEXT,
+                notes      TEXT DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
 
@@ -202,6 +229,7 @@ class DatabaseManager:
                 cost_per_input_token  REAL DEFAULT 0.0,
                 cost_per_output_token REAL DEFAULT 0.0,
                 is_active             INTEGER NOT NULL DEFAULT 1,
+                is_reasoning          INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(provider_id, name)
             );
 
@@ -350,9 +378,10 @@ class DatabaseManager:
                 for m in models:
                     conn.execute(
                         """INSERT OR IGNORE INTO models
-                           (provider_id, name, context_window)
-                           VALUES (?, ?, ?)""",
-                        (provider_row["id"], m["name"], m.get("context_window", 0)),
+                           (provider_id, name, context_window, is_reasoning)
+                           VALUES (?, ?, ?, ?)""",
+                        (provider_row["id"], m["name"], m.get("context_window", 0),
+                         1 if m.get("is_reasoning", False) else 0),
                     )
 
     # ------------------------------------------------------------------

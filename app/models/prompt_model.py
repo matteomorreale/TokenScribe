@@ -14,7 +14,11 @@ class PromptModel:
         conn = self.db.get_connection()
         try:
             rows = conn.execute(
-                "SELECT * FROM prompts WHERE study_id=? ORDER BY created_at ASC",
+                """SELECT p.*,
+                          (SELECT COUNT(*) FROM approved_translations WHERE prompt_id=p.id) AS translation_count
+                   FROM prompts p
+                   WHERE p.study_id=?
+                   ORDER BY p.created_at ASC""",
                 (study_id,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -31,24 +35,24 @@ class PromptModel:
         finally:
             conn.close()
 
-    def create(self, study_id: int, base_text: str, category: str = "") -> int:
+    def create(self, study_id: int, base_text: str, category: str = "", notes: str = "") -> int:
         conn = self.db.get_connection()
         try:
             cur = conn.execute(
-                "INSERT INTO prompts (study_id, base_text, category) VALUES (?, ?, ?)",
-                (study_id, base_text, category),
+                "INSERT INTO prompts (study_id, base_text, category, notes) VALUES (?, ?, ?, ?)",
+                (study_id, base_text, category, notes),
             )
             conn.commit()
             return cur.lastrowid
         finally:
             conn.close()
 
-    def update(self, prompt_id: int, base_text: str, category: str = ""):
+    def update(self, prompt_id: int, base_text: str, category: str = "", notes: str = ""):
         conn = self.db.get_connection()
         try:
             conn.execute(
-                "UPDATE prompts SET base_text=?, category=? WHERE id=?",
-                (base_text, category, prompt_id),
+                "UPDATE prompts SET base_text=?, category=?, notes=? WHERE id=?",
+                (base_text, category, notes, prompt_id),
             )
             conn.commit()
         finally:
@@ -58,6 +62,20 @@ class PromptModel:
         conn = self.db.get_connection()
         try:
             conn.execute("DELETE FROM prompts WHERE id=?", (prompt_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save_pei_snapshot(self, prompt_id: int, pei: float, cv_char: float, cv_word: float, cv_token: float):
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """UPDATE prompts
+                   SET pei_value=?, pei_cv_char=?, pei_cv_word=?, pei_cv_token=?,
+                       pei_saved_at=strftime('%Y-%m-%dT%H:%M:%S','now')
+                   WHERE id=?""",
+                (pei, cv_char, cv_word, cv_token, prompt_id),
+            )
             conn.commit()
         finally:
             conn.close()

@@ -3,8 +3,12 @@ TokenScribe — Experiment Model
 Author: Matteo Morreale
 """
 
+import logging
+
 from .database import DatabaseManager
 from config import TokenScribeConfig
+
+_log = logging.getLogger(__name__)
 
 _REASONING_THRESHOLD = TokenScribeConfig.REASONING_THRESHOLD
 
@@ -191,13 +195,14 @@ class ExperimentModel:
                           COALESCE(tr.visible_output_tokens, tr.normalized_output_tokens) AS visible_output_tokens,
                           COALESCE(tr.response_valid, CASE WHEN COALESCE(tr.response_text, '') = '' THEN 0 ELSE 1 END) AS response_valid,
                           tr.created_at,
-                          p.base_text, p.category,
+                          p.base_text, p.category, p.notes as prompt_notes,
                           l.name as language_name, l.code as language_code,
                           l.script_group as script_group,
                           l.morphology_group as morphology_group,
                           ws.name as writing_system,
                           m.name as model_name,
                           m.cost_per_output_token,
+                          m.is_reasoning as is_reasoning_capable,
                           pr.name as provider_name
                    FROM token_results tr
                    JOIN prompts p ON p.id = tr.prompt_id
@@ -219,7 +224,19 @@ class ExperimentModel:
                 d["reasoning_tokens"] = max(0, arot - vot)
                 d["cost_visible_only"] = round(vot * cpo, 8)
                 d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
-                d["is_reasoning_model"] = d["reasoning_tokens"] > _REASONING_THRESHOLD
+                is_capable = bool(d.get("is_reasoning_capable"))
+                reasoning_observed = d["reasoning_tokens"] > _REASONING_THRESHOLD
+                d["reasoning_observed"] = reasoning_observed
+                if is_capable and reasoning_observed:
+                    d["reasoning_state"] = "active"
+                elif is_capable and not reasoning_observed:
+                    d["reasoning_state"] = "capable_but_inactive"
+                elif not is_capable and reasoning_observed:
+                    d["reasoning_state"] = "anomaly"
+                    _log.warning("reasoning anomaly: model=%s provider=%s run_id=%s hidden_tokens=%d",
+                                 d.get("model_name"), d.get("provider_name"), run_id, d["reasoning_tokens"])
+                else:
+                    d["reasoning_state"] = "non_reasoning"
                 results.append(d)
             return results
         finally:

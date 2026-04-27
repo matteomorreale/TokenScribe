@@ -63,7 +63,7 @@ TokenScribe/
 
 ### Translation Pipeline
 
-- controllers/translation_controller.py — includes `ai_translate()` for AI candidate generation (uses gpt-5)
+- controllers/translation_controller.py — includes `ai_translate()` for AI candidate generation (uses gpt-5.5)
 - models/translation_model.py
 - models/selection_score_model.py
 - services/scoring_service.py
@@ -112,6 +112,12 @@ TokenScribe/
   — Pass 2: first `0.xx` or `1.0x` decimal in text (skips denominators via `(?<!/)\b`)
   — Pass 3: standalone `0` or `1`
 
+### TranslationModel (new methods)
+
+- `get_candidates_for_export(prompt_id)` → list of all candidates with scores + MAGI data (for per-prompt JSON download)
+- `update_candidate_text(candidate_id, text)` — overwrites candidate text (edit flow)
+- `get_latest_approved_at(prompt_id)` → ISO string or None — MAX(approved_at) in `approved_translations`
+
 ### SelectionScoreModel
 
 - `upsert_scores(candidates)` — persists MAGI Phase 1 scores; resets magi_score/magi_judges on recompute
@@ -123,10 +129,10 @@ TokenScribe/
 
 ### ExperimentModel
 
-- `get_results_by_run(run_id)` — rows enriched with: `reasoning_tokens`, `cost_visible_only`, `ror`, `is_reasoning_model`
+- `get_results_by_run(run_id)` — rows enriched with: `reasoning_tokens`, `cost_visible_only`, `ror`, `reasoning_observed`, `reasoning_state` (4-way: `active` | `capable_but_inactive` | `anomaly` | `non_reasoning`), `prompt_notes`, `is_reasoning_capable`; logs WARNING for `anomaly` state
 - `get_translation_scores_by_run(run_id)` — joins `run_translation_snapshot` → immune to re-approvals;
   includes all MAGI fields; `magi_judges` deserialized to dict before returning
-- `get_latest_pei_for_prompt(prompt_id)` — most recent PEI from any run (used by MAGI Phase 1)
+- `get_latest_pei_for_prompt(prompt_id)` — most recent PEI from `pei_results` (fallback when no approved translations exist at MAGI Phase 1 compute time)
 - `snapshot_translations(run_id, study_id)` — freezes approved translations at run start
 - `delete_run(run_id)` / `delete_runs_bulk(run_ids)` — cascade-deletes token_results
 
@@ -143,6 +149,21 @@ text changes to the `data-loading` value. Implemented in `tokenscribe.js` as a g
 `.ts-judge-cell` + `.ts-judge-tooltip` CSS pattern in `translations/list.html`.
 On hover, shows: judge name, model name, score, attempt count, error reason, raw LLM response.
 `magi_judges` JSON must be deserialized before reaching the template (done in model layer).
+
+### Translation Text Modal
+
+`#ts-modal-view-text` in `prompts/detail.html`. "View" button on each candidate row opens a
+full-screen modal (`ts-modal` + `active` class toggle) with the raw translation text in a `<pre>`.
+Closed via ×, Escape, or click-outside.
+
+### Language Preset Buttons
+
+`data-ts-lang-preset-key` / `data-ts-lang-preset-value` on `<button>` elements select matching
+`<option>` elements in the multi-select. Supported key types:
+
+- `writingSystem` / `scriptGroup` / `morphologyGroup` — matches against `data-*` attribute on `<option>`
+- `langCodes` — value is comma-separated language codes; matches `data-lang-code` on each `<option>`
+  (used by the "Mixed 10" preset: `it,de,ru,pl,ar,hi,zh-Hans,ja,ko`)
 
 ## Main Entry Points
 

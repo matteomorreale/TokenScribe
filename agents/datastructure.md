@@ -15,7 +15,14 @@ studies
   id, name, description, config (JSON), created_at
 
 prompts
-  id, study_id → studies.id, base_text, category, created_at
+  id, study_id → studies.id, base_text, category,
+  notes      TEXT DEFAULT '',   -- methodological notes, included in JSON exports
+  pei_value  REAL,              -- snapshot: last confirmed PEI
+  pei_cv_char REAL,
+  pei_cv_word REAL,
+  pei_cv_token REAL,
+  pei_saved_at TEXT,            -- ISO timestamp of last save_pei_snapshot() call
+  created_at
 
 translation_candidates
   id, prompt_id → prompts.id, language_id → languages.id,
@@ -39,7 +46,8 @@ providers
 
 models
   id, provider_id → providers.id, name, context_window,
-  cost_per_input_token, cost_per_output_token, is_active
+  cost_per_input_token, cost_per_output_token, is_active,
+  is_reasoning INTEGER NOT NULL DEFAULT 0  -- 1 = model exposes hidden reasoning tokens
 
 experiment_runs
   id, study_id → studies.id, timestamp, notes
@@ -58,11 +66,15 @@ token_results                 -- IMMUTABLE: INSERT only, no UPDATE
   response_text TEXT,
   created_at
 
-  -- Derived in Python (NOT stored):
+  -- Derived in Python by get_results_by_run() (NOT stored):
   -- reasoning_tokens = max(0, api_reported_output_tokens - visible_output_tokens)
   -- cost_visible_only = visible_output_tokens × cost_per_output_token
   -- ror = reasoning_tokens / visible_output_tokens
-  -- is_reasoning_model = reasoning_tokens > 10  (threshold guards against tokenizer-drift false positives)
+  -- reasoning_observed = reasoning_tokens > REASONING_THRESHOLD (10)
+  -- reasoning_state = "active"               (is_reasoning=1 AND reasoning_observed)
+  --                 | "capable_but_inactive"  (is_reasoning=1 AND NOT reasoning_observed)
+  --                 | "anomaly"               (is_reasoning=0 AND reasoning_observed) → WARNING logged
+  --                 | "non_reasoning"         (is_reasoning=0 AND NOT reasoning_observed)
 
 pei_results
   id, run_id → experiment_runs.id, prompt_id → prompts.id,

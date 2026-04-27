@@ -4,8 +4,9 @@ Author: Matteo Morreale
 """
 
 import json
+from datetime import datetime, timezone
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response
 from app.models import PromptModel, TranslationModel, StudyModel, SettingsModel, ExperimentModel, SelectionScoreModel
 from app.services import ScoringService, LLMService, MAGIService
 
@@ -144,7 +145,7 @@ def ai_translate(prompt_id: int):
 
     settings = _setm().get_all()
     llm = LLMService(settings)
-    model_name = "gpt-5.4"
+    model_name = "gpt-5.5"
 
     languages = _tm().get_all_languages()
     lang_by_id = {l["id"]: l for l in languages}
@@ -477,6 +478,63 @@ def ai_translate(prompt_id: int):
     return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
 
 
+@translation_bp.route("/translations/<int:candidate_id>/edit", methods=["GET", "POST"])
+def edit_translation(candidate_id: int):
+    tm = _tm()
+    candidate = tm.get_candidate_by_id(candidate_id)
+    if not candidate:
+        flash("Translation candidate not found.", "error")
+        return redirect(url_for("study.list_studies"))
+    prompt = _pm().get_by_id(candidate["prompt_id"])
+    study = _sm().get_by_id(prompt["study_id"])
+    if request.method == "POST":
+        text = request.form.get("text", "").strip()
+        if not text:
+            flash("Translation text is required.", "error")
+            return render_template(
+                "translations/form.html",
+                prompt=prompt, study=study, candidate=candidate, editing=True
+            )
+        tm.update_candidate_text(candidate_id, text)
+        flash("Translation updated.", "success")
+        return redirect(url_for("prompt.detail_prompt", prompt_id=candidate["prompt_id"]))
+    return render_template(
+        "translations/form.html",
+        prompt=prompt, study=study, candidate=candidate, editing=True
+    )
+
+
+@translation_bp.route("/prompts/<int:prompt_id>/translations/export.json")
+def export_candidates_json(prompt_id: int):
+    pm = _pm()
+    prompt = pm.get_by_id(prompt_id)
+    if not prompt:
+        flash("Prompt not found.", "error")
+        return redirect(url_for("study.list_studies"))
+    study = _sm().get_by_id(prompt["study_id"])
+    candidates = _tm().get_candidates_for_export(prompt_id)
+    payload = {
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "study": {
+            "id": study["id"],
+            "name": study["name"],
+        },
+        "prompt": {
+            "id": prompt["id"],
+            "base_text": prompt["base_text"],
+            "category": prompt.get("category"),
+            "created_at": prompt.get("created_at"),
+        },
+        "candidates": candidates,
+    }
+    filename = f"candidates_prompt_{prompt_id}.json"
+    return Response(
+        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @translation_bp.route("/translations/<int:candidate_id>/score", methods=["POST"])
 def score_translation(candidate_id: int):
     tm = _tm()
@@ -524,8 +582,23 @@ def compute_selection_scores(prompt_id: int):
         return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
 
     prompt = _pm().get_by_id(prompt_id)
-    em = ExperimentModel(current_app.config["DB"])
-    pei = em.get_latest_pei_for_prompt(prompt_id) or 0.0
+    approved = _tm().get_approved_by_prompt(prompt_id)
+    approved_texts = [c["text"] for c in approved if c.get("text")]
+    if approved_texts:
+        pei_result = _scorer.compute_pei(approved_texts)
+    else:
+        em = ExperimentModel(current_app.config["DB"])
+        pei_result = {"pei": em.get_latest_pei_for_prompt(prompt_id) or 0.0,
+                      "cv_char_length": 0.0, "cv_word_count": 0.0, "cv_token_count": 0.0}
+    pei = float(pei_result.get("pei") or 0.0)
+
+    _pm().save_pei_snapshot(
+        prompt_id,
+        pei=pei,
+        cv_char=float(pei_result.get("cv_char_length") or 0.0),
+        cv_word=float(pei_result.get("cv_word_count") or 0.0),
+        cv_token=float(pei_result.get("cv_token_count") or 0.0),
+    )
 
     for c in scored:
         c["prompt_id"] = prompt_id

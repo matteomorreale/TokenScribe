@@ -49,10 +49,11 @@ def new_prompt(study_id: int):
     if request.method == "POST":
         base_text = request.form.get("base_text", "").strip()
         category = request.form.get("category", "").strip()
+        notes = request.form.get("notes", "").strip()
         if not base_text:
             flash("Prompt text is required.", "error")
             return render_template("prompts/form.html", study=study, prompt=None)
-        prompt_id = _pm().create(study_id, base_text, category)
+        prompt_id = _pm().create(study_id, base_text, category, notes)
         flash("Prompt created.", "success")
         return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
     return render_template("prompts/form.html", study=study, prompt=None)
@@ -193,6 +194,10 @@ def detail_prompt(prompt_id: int):
 
     magi_readiness = _ssm().get_readiness_by_prompts([prompt_id]).get(prompt_id, {})
 
+    pei_saved_at = prompt.get("pei_saved_at")
+    latest_approved_at = _tm().get_latest_approved_at(prompt_id)
+    pei_stale = (not pei_saved_at) or bool(latest_approved_at and latest_approved_at > pei_saved_at)
+
     return render_template(
         "prompts/detail.html",
         prompt=prompt,
@@ -206,6 +211,8 @@ def detail_prompt(prompt_id: int):
         pei_script_groups=pei_script_groups,
         pei_morph_groups=pei_morph_groups,
         magi_readiness=magi_readiness,
+        pei_stale=pei_stale,
+        pei_saved_at=pei_saved_at,
     )
 
 
@@ -219,13 +226,52 @@ def edit_prompt(prompt_id: int):
     if request.method == "POST":
         base_text = request.form.get("base_text", "").strip()
         category = request.form.get("category", "").strip()
+        notes = request.form.get("notes", "").strip()
         if not base_text:
             flash("Prompt text is required.", "error")
             return render_template("prompts/form.html", study=study, prompt=prompt)
-        _pm().update(prompt_id, base_text, category)
+        _pm().update(prompt_id, base_text, category, notes)
         flash("Prompt updated.", "success")
         return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
     return render_template("prompts/form.html", study=study, prompt=prompt)
+
+
+@prompt_bp.route("/prompts/<int:prompt_id>/pei/refresh", methods=["POST"])
+def refresh_pei(prompt_id: int):
+    prompt = _pm().get_by_id(prompt_id)
+    if not prompt:
+        flash("Prompt not found.", "error")
+        return redirect(url_for("study.list_studies"))
+    approved = _tm().get_approved_by_prompt(prompt_id)
+    texts = [c["text"] for c in approved if c.get("text")]
+    if not texts:
+        flash("Nessuna traduzione approvata — PEI non calcolabile.", "warning")
+        return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
+    pei_result = _scorer.compute_pei(texts)
+    _pm().save_pei_snapshot(
+        prompt_id,
+        pei=float(pei_result.get("pei") or 0.0),
+        cv_char=float(pei_result.get("cv_char_length") or 0.0),
+        cv_word=float(pei_result.get("cv_word_count") or 0.0),
+        cv_token=float(pei_result.get("cv_token_count") or 0.0),
+    )
+    flash(
+        f"PEI aggiornato: {float(pei_result.get('pei') or 0.0):.4f} ({len(texts)} lingue approvate).",
+        "success",
+    )
+    return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
+
+
+@prompt_bp.route("/prompts/<int:prompt_id>/notes", methods=["POST"])
+def update_notes(prompt_id: int):
+    prompt = _pm().get_by_id(prompt_id)
+    if not prompt:
+        flash("Prompt not found.", "error")
+        return redirect(url_for("study.list_studies"))
+    notes = request.form.get("notes", "").strip()
+    _pm().update(prompt_id, prompt["base_text"], prompt["category"], notes)
+    flash("Notes saved.", "success")
+    return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
 
 
 @prompt_bp.route("/prompts/<int:prompt_id>/delete", methods=["POST"])

@@ -133,11 +133,19 @@ document.addEventListener("DOMContentLoaded", () => {
         const key = btn.dataset.tsLangPresetKey;
         const value = btn.dataset.tsLangPresetValue;
         const options = Array.from(langSelect.options);
-        const matchCount = options.filter((o) => (o.dataset[key] || "") === value).length;
-        if (matchCount < 1) return;
-        options.forEach((o) => {
-          o.selected = (o.dataset[key] || "") === value;
-        });
+        if (key === "langCodes") {
+          const codes = new Set(value.split(",").map((c) => c.trim()));
+          const matched = options.filter((o) => codes.has(o.dataset.langCode || ""));
+          if (matched.length < 1) return;
+          options.forEach((o) => { o.selected = false; });
+          matched.forEach((o) => { o.selected = true; });
+        } else {
+          const matchCount = options.filter((o) => (o.dataset[key] || "") === value).length;
+          if (matchCount < 1) return;
+          options.forEach((o) => {
+            o.selected = (o.dataset[key] || "") === value;
+          });
+        }
         setActivePresetButton(btn);
         langSelect.focus();
       });

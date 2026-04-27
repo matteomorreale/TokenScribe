@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Add Translation{% endblock %}
+{% block title %}{% if editing %}Edit Translation{% else %}Add Translation{% endif %}{% endblock %}
 {% block breadcrumb %}
 <a href="{{ url_for('study.list_studies') }}">Studies</a>
 <span class="sep">/</span>
@@ -7,12 +7,12 @@
 <span class="sep">/</span>
 <a href="{{ url_for('prompt.detail_prompt', prompt_id=prompt.id) }}">Prompt #{{ prompt.id }}</a>
 <span class="sep">/</span>
-<span class="current">Add Translation</span>
+<span class="current">{% if editing %}Edit Translation{% else %}Add Translation{% endif %}</span>
 {% endblock %}
 {% block content %}
 <div class="ts-page-header">
   <div>
-    <h1 class="ts-page-title">Add Translation Candidate</h1>
+    <h1 class="ts-page-title">{% if editing %}Edit Translation Candidate{% else %}Add Translation Candidate{% endif %}</h1>
     <p class="ts-page-subtitle">Prompt #{{ prompt.id }} — {{ study.name }}</p>
   </div>
 </div>
@@ -27,6 +27,15 @@
 
   <div class="ts-card">
     <form method="post">
+      {% if editing %}
+      <div class="ts-form-group">
+        <label class="ts-label">Target Language</label>
+        <div style="padding:.5rem 0; color:var(--ts-text);">
+          <strong>{{ candidate.language_name }}</strong>
+          <span style="color:var(--ts-text-muted); font-size:.85rem;">({{ candidate.language_code }}) — {{ candidate.writing_system }}</span>
+        </div>
+      </div>
+      {% else %}
       <div class="ts-form-group">
         <label class="ts-label" for="language_id">Target Language *</label>
         <select class="ts-select" id="language_id" name="language_id" required>
@@ -36,19 +45,22 @@
           {% endfor %}
         </select>
       </div>
+      {% endif %}
       <div class="ts-form-group">
         <label class="ts-label" for="text">Translation Text *</label>
         <textarea class="ts-textarea" id="text" name="text"
                   style="min-height:200px;"
                   placeholder="Enter the translated prompt here…"
-                  required></textarea>
+                  required>{% if editing %}{{ candidate.text }}{% endif %}</textarea>
         <div class="ts-input-hint">
           Preserve the <code>&lt;&lt;&lt;</code> and <code>&gt;&gt;&gt;</code> delimiters exactly as in the original.
         </div>
       </div>
       <div style="display:flex; gap:.75rem; margin-top:1.5rem;">
-        <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">Add Candidate</button>
-        <a href="{{ url_for('translation.list_translations', prompt_id=prompt.id) }}" class="ts-btn ts-btn-secondary ts-btn-lg">Cancel</a>
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
+          {% if editing %}Save Changes{% else %}Add Candidate{% endif %}
+        </button>
+        <a href="{{ url_for('prompt.detail_prompt', prompt_id=prompt.id) }}" class="ts-btn ts-btn-secondary ts-btn-lg">Cancel</a>
       </div>
     </form>
   </div>

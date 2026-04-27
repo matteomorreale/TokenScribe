@@ -27,6 +27,20 @@
   <div class="ts-prompt-block">{{ prompt.base_text }}</div>
 </div>
 
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Notes</span>
+  </div>
+  <form method="post" action="{{ url_for('prompt.update_notes', prompt_id=prompt.id) }}">
+    <textarea class="ts-textarea" name="notes" style="min-height:100px; margin-bottom:.75rem;"
+              placeholder="Decisioni sulle traduzioni, osservazioni metodologiche, contesto…">{{ prompt.notes or '' }}</textarea>
+    <div style="display:flex; align-items:center; gap:.75rem;">
+      <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Save Notes</button>
+      <span class="ts-input-hint" style="margin:0;">Incluse nei JSON delle esportazioni delle RUN.</span>
+    </div>
+  </form>
+</div>
+
 {% set r = magi_readiness %}
 {% set rstatus = r.get('status', 'red') if r else 'red' %}
 <div class="ts-card" style="margin-bottom:1.25rem; border-left:3px solid {% if rstatus == 'green' %}var(--ts-success){% elif rstatus == 'yellow' %}var(--ts-warning){% else %}var(--ts-error){% endif %};">
@@ -67,6 +81,7 @@
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Syllabic">Syllabic</button>
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Featural">Featural</button>
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Mixed">Mixed</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="langCodes" data-ts-lang-preset-value="it,de,ru,pl,ar,hi,zh-Hans,ja,ko">Mixed 10</button>
         </div>
         <select id="language_ids" name="language_ids" class="ts-select" multiple size="10" required>
           {% for l in languages %}
@@ -74,7 +89,8 @@
               <option value="{{ l.id }}"
                       data-writing-system="{{ l.writing_system }}"
                       data-script-group="{{ l.script_group or '' }}"
-                      data-morphology-group="{{ l.morphology_group or '' }}">{{ l.name }} ({{ l.code }}) — {{ l.writing_system }}</option>
+                      data-morphology-group="{{ l.morphology_group or '' }}"
+                      data-lang-code="{{ l.code }}">{{ l.name }} ({{ l.code }}) — {{ l.writing_system }}</option>
             {% endif %}
           {% endfor %}
         </select>
@@ -102,12 +118,31 @@
   </form>
 </div>
 
-<div class="ts-card" style="margin-bottom:1.25rem;">
+<div class="ts-card" style="margin-bottom:1.25rem;{% if pei_stale %} border-left:3px solid var(--ts-warning);{% endif %}">
   <div class="ts-card-header">
     <span class="ts-card-title">PEI (Prompt Equivalence Index)</span>
     <span class="ts-badge ts-badge-info">{{ pei_count }} traduzioni incluse</span>
     <span class="ts-badge ts-badge-secondary">{{ pei_band }}</span>
+    {% if pei_stale %}
+    <span class="ts-badge ts-badge-warning" title="Le traduzioni approvate sono cambiate dopo l'ultimo salvataggio PEI — il valore qui sopra è live, ma lo snapshot usato da MAGI potrebbe essere obsoleto.">
+      &#9888; PEI non confermato
+    </span>
+    {% else %}
+    <span class="ts-badge ts-badge-approved" title="PEI salvato il {{ pei_saved_at }}">&#10003; PEI aggiornato</span>
+    {% endif %}
+    <form method="post" action="{{ url_for('prompt.refresh_pei', prompt_id=prompt.id) }}" style="margin-left:auto;">
+      <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit"{% if not pei_stale %} style="opacity:.6;"{% endif %}>
+        &#8635; Aggiorna PEI
+      </button>
+    </form>
   </div>
+  {% if pei_stale %}
+  <p style="font-size:.8rem; color:var(--ts-warning); margin:.2rem 0 .6rem 0;">
+    Le traduzioni approvate sono cambiate{% if pei_saved_at %} dopo l'ultimo salvataggio ({{ pei_saved_at[:16] }}){% endif %}.
+    Il PEI mostrato è calcolato live dalla lista corrente.
+    Clicca <strong>Aggiorna PEI</strong> per confermare il riferimento usato da MAGI.
+  </p>
+  {% endif %}
   <div class="ts-grid ts-grid-4">
     <div class="ts-stat-card">
       <div class="ts-stat-label">PEI</div>
@@ -205,6 +240,9 @@
         <input type="hidden" name="next" value="prompt">
         <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Delete selected</button>
       </form>
+      {% if candidates %}
+      <a href="{{ url_for('translation.export_candidates_json', prompt_id=prompt.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm" download>&#8595; Export JSON</a>
+      {% endif %}
       <a href="{{ url_for('translation.new_translation', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">+ Add</a>
     </div>
   </div>
@@ -239,6 +277,10 @@
           <td>{% if c.ler_token is not none %}{{ "%.3f"|format(c.ler_token) }}{% else %}—{% endif %}</td>
           <td>
             <div style="display:flex; gap:.3rem; flex-wrap:wrap;">
+              <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm"
+                      data-ts-view-text="{{ c.text|e }}"
+                      data-ts-view-title="{{ c.language_name }} ({{ c.language_code }}) v{{ c.version }}">View</button>
+              <a href="{{ url_for('translation.edit_translation', candidate_id=c.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">Edit</a>
               <details class="ts-details">
                 <summary class="ts-btn ts-btn-secondary ts-btn-sm">Details</summary>
                 <div class="ts-details-panel">
@@ -357,4 +399,46 @@
   </div>
   {% endif %}
 </div>
+
+<div id="ts-modal-view-text" class="ts-modal" role="dialog" aria-modal="true">
+  <div class="ts-modal-content">
+    <div class="ts-modal-header">
+      <span class="ts-modal-title" id="ts-modal-view-title"></span>
+      <button class="ts-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="ts-modal-body">
+      <pre id="ts-modal-view-body" style="white-space:pre-wrap; word-break:break-word; font-family:inherit; margin:0; color:var(--ts-text);"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const modal = document.getElementById("ts-modal-view-text");
+  const titleEl = document.getElementById("ts-modal-view-title");
+  const bodyEl = document.getElementById("ts-modal-view-body");
+
+  function openModal(title, text) {
+    titleEl.textContent = title;
+    bodyEl.textContent = text;
+    modal.classList.add("active");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeModal() {
+    modal.classList.remove("active");
+    document.body.style.overflow = "";
+  }
+
+  document.querySelectorAll("[data-ts-view-text]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openModal(btn.dataset.tsViewTitle || "Translation", btn.dataset.tsViewText || "");
+    });
+  });
+
+  modal.querySelector(".ts-modal-close").addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+})();
+</script>
 {% endblock %}

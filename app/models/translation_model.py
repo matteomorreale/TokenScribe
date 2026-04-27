@@ -68,6 +68,48 @@ class TranslationModel:
         finally:
             conn.close()
 
+    def get_candidates_for_export(self, prompt_id: int) -> list:
+        """Return all candidates for a prompt with scores and MAGI data, for JSON export."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT tc.id, tc.prompt_id, tc.language_id, tc.text, tc.status,
+                          tc.version, tc.created_at,
+                          l.name AS language_name, l.code AS language_code,
+                          ws.name AS writing_system,
+                          l.script_group, l.morphology_group,
+                          ts.dsf, ts.rtf, ts.sfs, ts.ler_char, ts.ler_token,
+                          ts.computed_at AS scored_at,
+                          ssr.score_absolute AS magi_score_absolute,
+                          ssr.score_rank AS magi_score_rank,
+                          ssr.score_rank_pct AS magi_score_rank_pct,
+                          ssr.magi_required,
+                          ssr.lambda_used, ssr.nu_used,
+                          ssr.computed_at AS magi_computed_at
+                   FROM translation_candidates tc
+                   JOIN languages l ON l.id = tc.language_id
+                   JOIN writing_systems ws ON ws.id = l.writing_system_id
+                   LEFT JOIN translation_scores ts ON ts.candidate_id = tc.id
+                   LEFT JOIN selection_score_results ssr ON ssr.candidate_id = tc.id
+                   WHERE tc.prompt_id = ?
+                   ORDER BY l.name, tc.version""",
+                (prompt_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def update_candidate_text(self, candidate_id: int, text: str):
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE translation_candidates SET text=? WHERE id=?",
+                (text, candidate_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def update_status(self, candidate_id: int, status: str):
         conn = self.db.get_connection()
         try:
@@ -164,6 +206,17 @@ class TranslationModel:
                 (prompt_id,),
             ).fetchall()
             return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_latest_approved_at(self, prompt_id: int) -> str | None:
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT MAX(approved_at) as lat FROM approved_translations WHERE prompt_id=?",
+                (prompt_id,),
+            ).fetchone()
+            return row["lat"] if row else None
         finally:
             conn.close()
 

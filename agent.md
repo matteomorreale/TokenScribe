@@ -56,6 +56,10 @@ Expected range: ~1.0–1.3. Stored in `translation_scores` alongside SFS.
 CV = stdev/mean. Lower is better (less variance = fairer comparison across languages).
 Bands: < 0.20 ottimo, ≤ 0.35 plausibile, > 0.35 alto.
 Stored in `pei_results` and `pei_group_results` per experiment run.
+Also stored as a **snapshot** on the `prompts` row (`pei_value`, `pei_cv_*`, `pei_saved_at`) via
+`PromptModel.save_pei_snapshot()` — called automatically by `compute_selection_scores()` and
+manually via `POST /prompts/<id>/pei/refresh`. The detail page shows a staleness warning when
+`pei_saved_at < MAX(approved_at)` for that prompt.
 
 ### MAGI Selection Score — Phase 1
 
@@ -87,7 +91,13 @@ The judge prompt asks for a single JSON object with the three dimension keys, st
 - `reasoning_tokens = max(0, api_reported − visible)` — hidden reasoning overhead
 - `cost_visible_only = visible_output_tokens × cost_per_output_token` — comparable across models
 - `ror = reasoning_tokens / visible_output_tokens` — Reasoning Overhead Ratio
-- `is_reasoning_model = reasoning_tokens > REASONING_THRESHOLD` — derived boolean; threshold (`TokenScribeConfig.REASONING_THRESHOLD = 10`) avoids false positives from tokenizer drift (tiktoken vs provider tokenizer can introduce 1–3 token discrepancies on any model)
+- `is_reasoning_capable` — from `models.is_reasoning` (static DB flag set at model seed time)
+- `reasoning_observed = reasoning_tokens > REASONING_THRESHOLD` — dynamic boolean per result; threshold `TokenScribeConfig.REASONING_THRESHOLD = 10` guards against tokenizer-drift false positives
+- `reasoning_state` — 4-way classification derived by crossing the two flags:
+  - `"active"` — capable model, reasoning tokens observed
+  - `"capable_but_inactive"` — capable model, no reasoning tokens (e.g. extended-thinking disabled)
+  - `"anomaly"` — non-capable model yet reasoning tokens detected → WARNING logged
+  - `"non_reasoning"` — non-capable model, no reasoning tokens
 
 Note: `visible_output_tokens` uses tiktoken (cl100k_base) for all models. For non-OpenAI models
 (e.g. Anthropic, DeepSeek), small non-zero `reasoning_tokens` may reflect tokenizer mismatch
@@ -139,7 +149,7 @@ to signal it is hoverable. Old records (stored before `raw_response` was added) 
 - All experiment runs are immutable (no UPDATE on token_results)
 - Prompt template: [Instruction] <<< [Input] >>> [Expected Output]
 - Schema migrations via `_migrate_schema()` in DatabaseManager using ALTER TABLE ADD COLUMN
-- Derived fields (`reasoning_tokens`, `ror`, `cost_visible_only`, `is_reasoning_model`) are
+- Derived fields (`reasoning_tokens`, `ror`, `cost_visible_only`, `reasoning_observed`, `reasoning_state`) are
   computed in Python inside `get_results_by_run()` — NOT stored in the DB
 - `magi_judges` is stored as JSON TEXT in DB; deserialized to dict in both
   `SelectionScoreModel.get_by_prompt()` and `ExperimentModel.get_translation_scores_by_run()`

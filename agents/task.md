@@ -234,6 +234,69 @@
     "affected_files": ["app/services/magi_service.py"],
     "requires_db_changes": false,
     "notes_for_agent": "evaluate() retries up to MAX_RETRIES=3 via _call_once(). Returns on first successful parse; on all failures returns last verdict. _parse_score() three-pass: (1) bare number as full response, (2) first 0.xx/1.0x decimal in text with (?<!/) lookbehind to skip denominators, (3) standalone 0 or 1. Judge prompt rewritten with structured sections (## Input, ## Task, ## Output format MANDATORY) and four valid-response examples. logging.getLogger(__name__) logs each verdict at INFO (success) or WARNING (failure) with raw response repr."
+  },
+  {
+    "task_id": "T018",
+    "title": "Reasoning model capability flag + 4-way reasoning_state classification",
+    "status": "completed",
+    "dependencies": ["T009"],
+    "affected_modules": ["DatabaseManager", "ExperimentModel", "ExportService", "ReportController"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/models/experiment_model.py",
+      "app/services/export_service.py",
+      "app/views/templates/reports/study_report.html",
+      "config.py"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New column models.is_reasoning (INT 0/1). DEFAULT_MODELS in config.py now carries is_reasoning per entry. get_results_by_run() derives reasoning_state (active|capable_but_inactive|anomaly|non_reasoning) by crossing is_reasoning_capable (from DB) with reasoning_observed (runtime threshold). anomaly state logs WARNING. CSV export replaces is_reasoning_model with is_reasoning_capable + reasoning_observed + reasoning_state. study_report.html column renamed to 'Reasoning Active', uses reasoning_observed."
+  },
+  {
+    "task_id": "T019",
+    "title": "PEI snapshot on prompts + staleness indicator",
+    "status": "completed",
+    "dependencies": ["T011"],
+    "affected_modules": ["DatabaseManager", "PromptModel", "PromptController", "TranslationController"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/models/prompt_model.py",
+      "app/controllers/prompt_controller.py",
+      "app/controllers/translation_controller.py",
+      "app/views/templates/prompts/detail.html"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New columns on prompts: pei_value, pei_cv_char, pei_cv_word, pei_cv_token, pei_saved_at. PromptModel.save_pei_snapshot() writes these. compute_selection_scores() now computes PEI fresh from approved translations (not ExperimentModel fallback first) and saves snapshot automatically. POST /prompts/<id>/pei/refresh is a standalone manual refresh endpoint. detail.html shows warning badge + message when pei_saved_at < MAX(approved_at) (pei_stale flag from controller)."
+  },
+  {
+    "task_id": "T020",
+    "title": "Prompt notes field",
+    "status": "completed",
+    "dependencies": ["T002"],
+    "affected_modules": ["DatabaseManager", "PromptModel", "PromptController"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/models/prompt_model.py",
+      "app/controllers/prompt_controller.py",
+      "app/views/templates/prompts/form.html",
+      "app/views/templates/prompts/detail.html"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New column prompts.notes TEXT. create() and update() accept notes param. POST /prompts/<id>/notes is a quick inline save on the detail page. Notes are included in get_results_by_run() as prompt_notes and propagated to CSV export."
+  },
+  {
+    "task_id": "T021",
+    "title": "Translation candidate edit + per-prompt JSON export",
+    "status": "completed",
+    "dependencies": ["T003", "T008"],
+    "affected_modules": ["TranslationModel", "TranslationController"],
+    "affected_files": [
+      "app/models/translation_model.py",
+      "app/controllers/translation_controller.py",
+      "app/views/templates/translations/form.html",
+      "app/views/templates/prompts/detail.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "GET/POST /translations/<id>/edit reuses translations/form.html with editing=True; language is shown read-only. TranslationModel.update_candidate_text() updates text only. GET /prompts/<id>/translations/export.json returns a JSON attachment with study, prompt, and all candidates+scores+MAGI data via get_candidates_for_export(). View modal on detail.html uses data-ts-view-text / data-ts-view-title attributes."
   }
 ]
 ```

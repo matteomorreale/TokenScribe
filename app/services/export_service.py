@@ -55,7 +55,7 @@ class ExportService:
 
         output = io.StringIO()
         fieldnames = [
-            "run_id", "prompt_id", "base_text", "category",
+            "run_id", "prompt_id", "base_text", "category", "prompt_notes",
             "language_name", "language_code", "writing_system", "script_group", "morphology_group",
             "model_name", "provider_name",
             "input_tokens",
@@ -63,7 +63,9 @@ class ExportService:
             "reasoning_tokens",
             "api_reported_output_tokens",
             "ror",
-            "is_reasoning_model",
+            "is_reasoning_capable",
+            "reasoning_observed",
+            "reasoning_state",
             "cost_visible_only",
             "cost",
             "visible_output_text_length",
