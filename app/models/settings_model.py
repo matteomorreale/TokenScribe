@@ -136,6 +136,34 @@ class SettingsModel:
         finally:
             conn.close()
 
+    def get_all_models_flat(self):
+        """Return all models (active + inactive) with provider name, for UI dropdowns."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT m.id, m.name, m.is_active, p.name as provider_name
+                   FROM models m
+                   JOIN providers p ON p.id = m.provider_id
+                   ORDER BY p.name, m.name"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_magi_judge_ids(self) -> list:
+        """Return [balthasar_id, caspar_id, melchior_id] as ints, or None for unconfigured slots."""
+        keys = ["magi_judge_balthasar_id", "magi_judge_caspar_id", "magi_judge_melchior_id"]
+        conn = self.db.get_connection()
+        try:
+            result = []
+            for key in keys:
+                row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+                val = row["value"] if row else None
+                result.append(int(val) if val else None)
+            return result
+        finally:
+            conn.close()
+
     def add_language(self, name: str, code: str, writing_system_id: int) -> int:
         conn = self.db.get_connection()
         try:

@@ -8,11 +8,21 @@ from flask import (
     url_for, flash, current_app, jsonify
 )
 from app.models import StudyModel, ExperimentModel, PromptModel, TranslationModel, SettingsModel, SelectionScoreModel
-from app.services import LLMService, ScoringService
+from app.services import LLMService, ScoringService, MAGIService
 
 experiment_bp = Blueprint("experiment", __name__)
 
 _scorer = ScoringService()
+
+_PROVIDER_KEY_MAP = {
+    "openai":    "openai_api_key",
+    "anthropic": "anthropic_api_key",
+    "google":    "google_api_key",
+    "deepseek":  "deepseek_api_key",
+    "meta":      "meta_api_key",
+    "qwen":      "qwen_api_key",
+    "mistral":   "mistral_api_key",
+}
 
 
 def _em() -> ExperimentModel:
@@ -68,9 +78,23 @@ def new_experiment(study_id: int):
     if request.method == "GET":
         prompt_ids = [p["id"] for p in prompts]
         readiness = _ssm().get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
+        settings_get = _stm().get_all()
+        configured_providers = {
+            p for p, k in _PROVIDER_KEY_MAP.items() if settings_get.get(k)
+        }
+        judge_ids = _stm().get_magi_judge_ids()
+        em_get = _em()
+        judge_info = [
+            em_get.get_model_by_id(int(jid)) if jid else None
+            for jid in judge_ids
+        ]
+        judge_model_ids = {jid for jid in judge_ids if jid}
         return render_template(
             "experiments/new.html",
-            study=study, models=models, prompts=prompts, readiness=readiness
+            study=study, models=models, prompts=prompts, readiness=readiness,
+            configured_providers=configured_providers,
+            judge_info=judge_info,
+            judge_model_ids=judge_model_ids,
         )
     if request.method == "POST":
         selected_model_ids = request.form.getlist("model_ids", type=int)
@@ -79,15 +103,110 @@ def new_experiment(study_id: int):
             flash("Select at least one model.", "error")
             prompt_ids = [p["id"] for p in prompts]
             readiness = _ssm().get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
+            settings_err = _stm().get_all()
+            configured_providers = {
+                p for p, k in _PROVIDER_KEY_MAP.items() if settings_err.get(k)
+            }
+            judge_ids_err = _stm().get_magi_judge_ids()
+            em_err = _em()
+            judge_info_err = [
+                em_err.get_model_by_id(int(jid)) if jid else None
+                for jid in judge_ids_err
+            ]
             return render_template(
                 "experiments/new.html",
-                study=study, models=models, prompts=prompts, readiness=readiness
+                study=study, models=models, prompts=prompts, readiness=readiness,
+                configured_providers=configured_providers,
+                judge_info=judge_info_err,
+                judge_model_ids={jid for jid in judge_ids_err if jid},
             )
+
         # Create run and immediately freeze the approved translations
         em = _em()
         run_id = em.create_run(study_id, notes)
         em.snapshot_translations(run_id, study_id)
+
+        # Read settings once — used for MAGI judges and LLM service
         settings = _stm().get_all()
+
+        # Resolve MAGI judge models from settings
+        judge_id_vals = [
+            settings.get("magi_judge_balthasar_id"),
+            settings.get("magi_judge_caspar_id"),
+            settings.get("magi_judge_melchior_id"),
+        ]
+        judge_models = []
+        if all(judge_id_vals):
+            judge_models = [em.get_model_by_id(int(jid)) for jid in judge_id_vals]
+            judge_models = [m for m in judge_models if m]
+
+        # Auto-compute MAGI Phase 1 for prompts that have scored candidates but no Phase 1 yet,
+        # then immediately run Phase 2 for flagged candidates if judges are configured
+        ssm = _ssm()
+        prompt_ids = [p["id"] for p in prompts]
+        readiness = ssm.get_readiness_by_prompts(prompt_ids)
+        magi_auto_count = 0
+        magi_required_warnings = []
+        magi_phase2_skipped = False
+
+        for prompt in prompts:
+            r = readiness.get(prompt["id"], {})
+            if r.get("magi_count", 0) == 0 and r.get("scored_count", 0) > 0:
+                approved = _tm().get_approved_by_prompt(prompt["id"])
+                scored = [c for c in approved if c.get("sfs") is not None]
+                if scored:
+                    pei = em.get_latest_pei_for_prompt(prompt["id"]) or 0.0
+                    for c in scored:
+                        c["id"] = c["candidate_id"]  # upsert_scores expects candidate id under "id"
+                        c["pei"] = pei
+                    result = _scorer.compute_selection_scores(scored)
+                    ssm.upsert_scores(result)
+                    magi_auto_count += len(result)
+                    flagged = [c for c in result if c.get("magi_required")]
+                    if flagged:
+                        if len(judge_models) == 3:
+                            llm_magi = LLMService(settings)
+                            magi_svc = MAGIService()
+                            for c in flagged:
+                                panel = magi_svc.run_panel(
+                                    original=prompt["base_text"],
+                                    translation=c.get("text", ""),
+                                    language=c.get("language_name", ""),
+                                    sfs=c.get("sfs") or 0.0,
+                                    ler_char=c.get("ler_char") or 1.0,
+                                    llm_service=llm_magi,
+                                    judge_models=judge_models,
+                                )
+                                ssm.update_magi_result(
+                                    candidate_id=c["id"],
+                                    magi_score=panel["magi_score"],
+                                    magi_disagreement=panel["magi_disagreement"],
+                                    magi_judges=panel["judges"],
+                                )
+                                score_str = (
+                                    f"{panel['magi_score']:.3f}"
+                                    if panel["magi_score"] is not None
+                                    else "n/d"
+                                )
+                                magi_required_warnings.append(
+                                    f"Prompt {prompt['id']} — {c.get('language_name')}: "
+                                    f"MAGI score {score_str}"
+                                    + (" ↯ disaccordo" if panel["magi_disagreement"] else "")
+                                )
+                        else:
+                            magi_phase2_skipped = True
+
+        if magi_auto_count > 0:
+            flash(f"MAGI Phase 1 auto-calcolato per {magi_auto_count} candidati.", "info")
+        for w in magi_required_warnings:
+            flash(f"⚠ {w}", "warning")
+        if magi_phase2_skipped:
+            flash(
+                "MAGI Judge Panel non configurato — Phase 2 saltata. "
+                "Configura i tre judge in Settings.",
+                "warning",
+            )
+
         llm = LLMService(settings)
 
         errors = []

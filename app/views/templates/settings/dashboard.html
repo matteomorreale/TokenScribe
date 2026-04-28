@@ -125,6 +125,46 @@
   </form>
 </div>
 
+<!-- MAGI Judge Panel -->
+<div class="ts-card" style="margin-bottom:1.5rem;">
+  <div class="ts-card-header"><span class="ts-card-title">MAGI Judge Panel</span></div>
+  <form method="post" action="{{ url_for('settings.save_magi_judges') }}">
+    <div class="ts-grid ts-grid-3" style="gap:1rem;">
+      {% for key, label in magi_judge_keys %}
+      {% set loop_idx = loop.index0 %}
+      <div class="ts-form-group" style="margin-bottom:0;">
+        <label class="ts-label" for="{{ key }}">{{ label }}</label>
+        <select class="ts-select" id="{{ key }}" name="{{ key }}">
+          <option value="">— non configurato —</option>
+          {% set current_provider = namespace(name='') %}
+          {% for m in all_models %}
+            {% if m.provider_name != current_provider.name %}
+              {% set current_provider.name = m.provider_name %}
+            {% endif %}
+            <option value="{{ m.id }}"
+              {{ 'selected' if magi_judge_ids[loop_idx] == m.id else '' }}
+              {{ 'disabled' if m.provider_name not in configured_providers else '' }}>
+              {{ m.provider_name }} / {{ m.name }}{{ ' ✗' if m.provider_name not in configured_providers else '' }}
+            </option>
+          {% endfor %}
+        </select>
+        {% if magi_judge_ids[loop_idx] %}
+        <div class="ts-input-hint" style="color:var(--ts-success);">✓ Configurato</div>
+        {% else %}
+        <div class="ts-input-hint" style="color:var(--ts-error);">✗ Non configurato</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <p style="font-size:.78rem; color:var(--ts-text-muted); margin:.85rem 0 1rem;">
+      Questi modelli vengono usati esclusivamente per la valutazione qualitativa pre-run (MAGI Phase 2).
+      Si consiglia di scegliere modelli non inclusi nelle run sperimentali.
+      I modelli marcati con ✗ appartengono a provider senza API key configurata.
+    </p>
+    <button type="submit" class="ts-btn ts-btn-primary">Salva MAGI Judge Panel</button>
+  </form>
+</div>
+
 <!-- Research Battery -->
 <div class="ts-card" style="margin-bottom:1.5rem;">
   <div class="ts-card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem;">

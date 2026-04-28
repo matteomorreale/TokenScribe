@@ -15,7 +15,8 @@ class PromptModel:
         try:
             rows = conn.execute(
                 """SELECT p.*,
-                          (SELECT COUNT(*) FROM approved_translations WHERE prompt_id=p.id) AS translation_count
+                          (SELECT COUNT(*) FROM translation_candidates
+                           WHERE prompt_id=p.id AND status='approved') AS translation_count
                    FROM prompts p
                    WHERE p.study_id=?
                    ORDER BY p.created_at ASC""",
@@ -84,7 +85,7 @@ class PromptModel:
         conn = self.db.get_connection()
         try:
             row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM translation_candidates WHERE prompt_id=?",
+                "SELECT COUNT(*) as cnt FROM translation_candidates WHERE prompt_id=? AND status='approved'",
                 (prompt_id,),
             ).fetchone()
             return row["cnt"] if row else 0

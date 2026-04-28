@@ -56,7 +56,8 @@ class TokenScribeConfig:
             {"name": "claude-sonnet-4",    "context_window": 200000, "is_reasoning": False},
         ],
         "google": [
-            {"name": "gemini-2.5-pro",   "context_window": 1000000, "is_reasoning": True},
+            {"name": "gemini-3.1-pro",    "context_window": 1000000, "is_reasoning": True},
+            {"name": "gemini-2.5-pro",    "context_window": 1000000, "is_reasoning": True},
             {"name": "gemini-2.5-flash",  "context_window": 1000000, "is_reasoning": True},
             {"name": "gemini-2.0-flash",  "context_window": 1000000, "is_reasoning": False},
         ],

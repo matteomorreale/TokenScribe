@@ -75,6 +75,19 @@
   </div>
 
   <div class="ts-card">
+    <!-- MAGI Judge Panel banner -->
+    {% set judges_ok = judge_info and (judge_info | length == 3) and (None not in judge_info) %}
+    {% if judges_ok %}
+    <div style="background:rgba(56,189,130,.07); border:1px solid rgba(56,189,130,.3); border-radius:6px; padding:.6rem .85rem; margin-bottom:1rem; font-size:.8rem; color:var(--ts-success);">
+      MAGI Judge Panel: {{ judge_info[0].name }} · {{ judge_info[1].name }} · {{ judge_info[2].name }}
+    </div>
+    {% else %}
+    <div style="background:rgba(249,199,79,.06); border:1px solid rgba(249,199,79,.3); border-radius:6px; padding:.6rem .85rem; margin-bottom:1rem; font-size:.8rem; color:var(--ts-warning);">
+      ⚠ MAGI Judge Panel non configurato — Phase 2 verrà saltata.
+      <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning); text-decoration:underline;">Configura in Settings →</a>
+    </div>
+    {% endif %}
+
     <form method="post" action="{{ url_for('experiment.new_experiment', study_id=study.id) }}">
       <div class="ts-form-group">
         <label class="ts-label">Select Models *</label>
@@ -85,11 +98,18 @@
               {% set current_provider.name = m.provider_name %}
               <div style="width:100%; margin-top:.5rem; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--ts-accent); padding:.2rem 0;">
                 {{ m.provider_name }}
+                {% if m.provider_name not in configured_providers %}
+                <span style="color:var(--ts-error); font-weight:400; text-transform:none; letter-spacing:0;"> — API key mancante</span>
+                {% endif %}
               </div>
             {% endif %}
-            <label class="ts-checkbox-item">
-              <input type="checkbox" name="model_ids" value="{{ m.id }}">
-              {{ m.name }}
+            {% set has_key = m.provider_name in configured_providers %}
+            {% set is_judge = m.id in judge_model_ids %}
+            {% set blocked = not has_key or is_judge %}
+            <label class="ts-checkbox-item" style="{{ 'opacity:.45; cursor:not-allowed;' if blocked else '' }}"
+                   title="{{ 'Riservato a MAGI Judge Panel' if is_judge else ('API key non configurata per ' + m.provider_name if not has_key else '') }}">
+              <input type="checkbox" name="model_ids" value="{{ m.id }}" {{ 'disabled' if blocked else '' }}>
+              {{ m.name }}{% if is_judge %} <span style="font-size:.7rem; color:var(--ts-text-muted);">[MAGI]</span>{% endif %}
             </label>
           {% endfor %}
         </div>

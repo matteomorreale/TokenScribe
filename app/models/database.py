@@ -155,6 +155,30 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        # Seed default MAGI judge settings (only if not yet configured)
+        try:
+            judge_seeds = [
+                ("magi_judge_balthasar_id", "openai",     "gpt-4.1"),
+                ("magi_judge_caspar_id",    "anthropic",  "claude-opus-4-5"),
+                ("magi_judge_melchior_id",  "google",     "gemini-2.5-pro"),
+            ]
+            for key, pname, mname in judge_seeds:
+                if conn.execute("SELECT id FROM settings WHERE key=?", (key,)).fetchone():
+                    continue
+                row = conn.execute(
+                    """SELECT m.id FROM models m
+                       JOIN providers p ON p.id = m.provider_id
+                       WHERE p.name=? AND m.name=?""",
+                    (pname, mname),
+                ).fetchone()
+                if row:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                        (key, str(row["id"])),
+                    )
+        except sqlite3.Error:
+            pass
+
     def _create_tables(self, conn: sqlite3.Connection):
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS writing_systems (

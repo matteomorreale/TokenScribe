@@ -47,9 +47,10 @@
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header">
     <span class="ts-card-title">Prompts</span>
-    <a href="{{ url_for('prompt.new_prompt', study_id=study.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">
-      + Add Prompt
-    </a>
+    <div style="display:flex; gap:.5rem;">
+      <a href="{{ url_for('study.export_prompts', study_id=study.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">Export JSON</a>
+      <a href="{{ url_for('prompt.new_prompt', study_id=study.id) }}" class="ts-btn ts-btn-primary ts-btn-sm">+ Add Prompt</a>
+    </div>
   </div>
   {% if prompts %}
   <div class="ts-table-wrap">

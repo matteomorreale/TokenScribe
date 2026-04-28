@@ -209,6 +209,37 @@ class TranslationModel:
         finally:
             conn.close()
 
+    def get_approved_for_export(self, prompt_id: int) -> list:
+        """Return approved translations for a prompt with full scores, for JSON snapshot export."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT at.approved_at,
+                          tc.id AS candidate_id, tc.text, tc.version,
+                          l.id AS language_id, l.name AS language_name, l.code AS language_code,
+                          ws.name AS writing_system, l.script_group, l.morphology_group,
+                          ts.dsf, ts.rtf, ts.sfs, ts.ler_char, ts.ler_token,
+                          ts.computed_at AS scored_at,
+                          ssr.score_absolute AS magi_score_absolute,
+                          ssr.score_rank AS magi_score_rank,
+                          ssr.score_rank_pct AS magi_score_rank_pct,
+                          ssr.magi_required, ssr.magi_score, ssr.magi_disagreement,
+                          ssr.lambda_used, ssr.nu_used,
+                          ssr.computed_at AS magi_computed_at
+                   FROM approved_translations at
+                   JOIN translation_candidates tc ON tc.id = at.candidate_id AND tc.status = 'approved'
+                   JOIN languages l ON l.id = at.language_id
+                   JOIN writing_systems ws ON ws.id = l.writing_system_id
+                   LEFT JOIN translation_scores ts ON ts.candidate_id = tc.id
+                   LEFT JOIN selection_score_results ssr ON ssr.candidate_id = tc.id
+                   WHERE at.prompt_id = ?
+                   ORDER BY l.name""",
+                (prompt_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def get_latest_approved_at(self, prompt_id: int) -> str | None:
         conn = self.db.get_connection()
         try:

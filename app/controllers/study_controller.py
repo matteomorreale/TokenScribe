@@ -4,7 +4,8 @@ Author: Matteo Morreale
 """
 
 import json
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
+from datetime import datetime, timezone
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response
 from app.models import StudyModel
 
 study_bp = Blueprint("study", __name__, url_prefix="/studies")
@@ -51,6 +52,87 @@ def detail_study(study_id: int):
     runs = ExperimentModel(current_app.config["DB"]).get_runs_by_study(study_id)
     return render_template(
         "studies/detail.html", study=study, prompts=prompts, runs=runs
+    )
+
+
+@study_bp.route("/<int:study_id>/export-prompts")
+def export_prompts(study_id: int):
+    model = _get_model()
+    study = model.get_by_id(study_id)
+    if not study:
+        flash("Study not found.", "error")
+        return redirect(url_for("study.list_studies"))
+    from app.models import PromptModel, TranslationModel
+    pm = PromptModel(current_app.config["DB"])
+    tm = TranslationModel(current_app.config["DB"])
+    prompts = pm.get_by_study(study_id)
+    output_prompts = []
+    for p in prompts:
+        translations = tm.get_approved_for_export(p["id"])
+        output_prompts.append({
+            "id": p["id"],
+            "base_text": p["base_text"],
+            "category": p.get("category") or "",
+            "notes": p.get("notes") or "",
+            "created_at": p.get("created_at"),
+            "pei": {
+                "value": p.get("pei_value"),
+                "cv_char": p.get("pei_cv_char"),
+                "cv_word": p.get("pei_cv_word"),
+                "cv_token": p.get("pei_cv_token"),
+                "saved_at": p.get("pei_saved_at"),
+            },
+            "approved_translations": [
+                {
+                    "language": t["language_name"],
+                    "language_code": t["language_code"],
+                    "writing_system": t["writing_system"],
+                    "script_group": t.get("script_group"),
+                    "morphology_group": t.get("morphology_group"),
+                    "text": t["text"],
+                    "version": t.get("version"),
+                    "approved_at": t.get("approved_at"),
+                    "scores": {
+                        "sfs": t.get("sfs"),
+                        "ler_char": t.get("ler_char"),
+                        "ler_token": t.get("ler_token"),
+                        "dsf": t.get("dsf"),
+                        "rtf": t.get("rtf"),
+                        "scored_at": t.get("scored_at"),
+                    },
+                    "magi": {
+                        "score_absolute": t.get("magi_score_absolute"),
+                        "score_rank": t.get("magi_score_rank"),
+                        "score_rank_pct": t.get("magi_score_rank_pct"),
+                        "required": bool(t.get("magi_required")),
+                        "score": t.get("magi_score"),
+                        "disagreement": (
+                            bool(t.get("magi_disagreement"))
+                            if t.get("magi_disagreement") is not None else None
+                        ),
+                        "lambda_used": t.get("lambda_used"),
+                        "nu_used": t.get("nu_used"),
+                        "computed_at": t.get("magi_computed_at"),
+                    },
+                }
+                for t in translations
+            ],
+        })
+    payload = {
+        "study": {
+            "id": study["id"],
+            "name": study["name"],
+            "description": study.get("description"),
+        },
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "prompt_count": len(output_prompts),
+        "prompts": output_prompts,
+    }
+    filename = f"study_{study_id}_prompts_snapshot.json"
+    return Response(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

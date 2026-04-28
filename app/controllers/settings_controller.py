@@ -19,6 +19,23 @@ API_KEY_FIELDS = [
     ("mistral_api_key", "Mistral API Key"),
 ]
 
+# Maps provider DB name → settings key for API key
+PROVIDER_KEY_MAP = {
+    "openai":    "openai_api_key",
+    "anthropic": "anthropic_api_key",
+    "google":    "google_api_key",
+    "deepseek":  "deepseek_api_key",
+    "meta":      "meta_api_key",
+    "qwen":      "qwen_api_key",
+    "mistral":   "mistral_api_key",
+}
+
+MAGI_JUDGE_KEYS = [
+    ("magi_judge_balthasar_id", "Balthasar"),
+    ("magi_judge_caspar_id",    "Caspar"),
+    ("magi_judge_melchior_id",  "Melchior"),
+]
+
 
 def _stm() -> SettingsModel:
     return SettingsModel(current_app.config["DB"])
@@ -43,6 +60,11 @@ def settings_dashboard():
     languages = stm.get_all_languages()
     writing_systems = stm.get_all_writing_systems()
     battery_status = BatteryService.get_status(_study_model())
+    all_models = stm.get_all_models_flat()
+    magi_judge_ids = stm.get_magi_judge_ids()
+    configured_providers = {
+        p for p, k in PROVIDER_KEY_MAP.items() if current_settings.get(k)
+    }
     return render_template(
         "settings/dashboard.html",
         current_settings=current_settings,
@@ -52,6 +74,10 @@ def settings_dashboard():
         languages=languages,
         writing_systems=writing_systems,
         battery_status=battery_status,
+        all_models=all_models,
+        magi_judge_ids=magi_judge_ids,
+        magi_judge_keys=MAGI_JUDGE_KEYS,
+        configured_providers=configured_providers,
     )
 
 
@@ -124,6 +150,19 @@ def seed_battery():
         flash(f"Already present, skipped: {names}.", "info")
     if not created and not skipped:
         flash("No batteries matched the request.", "warning")
+    return redirect(url_for("settings.settings_dashboard"))
+
+
+@settings_bp.route("/magi-judges", methods=["POST"])
+def save_magi_judges():
+    stm = _stm()
+    data = {}
+    for key, _ in MAGI_JUDGE_KEYS:
+        val = request.form.get(key, "").strip()
+        if val:
+            data[key] = val
+    stm.set_many(data)
+    flash("MAGI Judge Panel aggiornato.", "success")
     return redirect(url_for("settings.settings_dashboard"))
 
 
