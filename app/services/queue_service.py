@@ -205,6 +205,35 @@ class QueueService:
             magi_judges=panel["judges"],
         )
 
+    def _get_fallback_model(self, provider_name: str, exclude_model_id: int,
+                            original_model_name: str = "") -> dict | None:
+        conn = self._db.get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.name, m.is_reasoning,
+                       m.cost_per_input_token, m.cost_per_output_token
+                FROM models m
+                JOIN providers p ON p.id = m.provider_id
+                WHERE p.name = ? AND m.is_active = 1 AND m.id != ?
+                ORDER BY m.id DESC
+                """,
+                (provider_name, exclude_model_id),
+            ).fetchall()
+            if not rows:
+                return None
+            # Prefer same-tier model (e.g. flash→flash, sonnet→sonnet, turbo→turbo)
+            _TIERS = ["flash", "sonnet", "haiku", "opus", "turbo", "pro", "mini", "nano"]
+            orig = original_model_name.lower()
+            for tier in _TIERS:
+                if tier in orig:
+                    same_tier = [r for r in rows if tier in r["name"].lower()]
+                    if same_tier:
+                        return dict(same_tier[0])
+            return dict(rows[0])
+        finally:
+            conn.close()
+
     def _exec_llm_call(self, payload: dict) -> None:
         from app.services.llm_service import LLMService
 
@@ -234,6 +263,24 @@ class QueueService:
             is_reasoning=bool(payload.get("is_reasoning", False)),
             _ctx=llm_ctx,
         )
+        if not result.success and result.model_not_found:
+            fallback = self._get_fallback_model(payload["provider"], model_id, payload["model_name"])
+            if fallback:
+                logger.warning(
+                    "Model %s (id=%d) not found, retrying with fallback %s (id=%d)",
+                    payload["model_name"], model_id, fallback["name"], fallback["id"],
+                )
+                result = llm.call(
+                    provider=payload["provider"],
+                    model_name=fallback["name"],
+                    prompt_text=payload["text"],
+                    cost_per_input=float(fallback.get("cost_per_input_token") or 0.0),
+                    cost_per_output=float(fallback.get("cost_per_output_token") or 0.0),
+                    is_reasoning=bool(fallback.get("is_reasoning", False)),
+                    _ctx=llm_ctx,
+                )
+                if result.success:
+                    model_id = fallback["id"]
         if not result.success:
             raise RuntimeError(f"LLM call failed: {result.error}")
 

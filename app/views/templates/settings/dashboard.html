@@ -28,6 +28,14 @@
       </div>
       {% endfor %}
     </div>
+    <div class="ts-form-group" style="margin-top:1rem; max-width:320px;">
+      <label class="ts-label" for="qwen_region">Qwen (DashScope) Region</label>
+      <select class="ts-input" id="qwen_region" name="qwen_region">
+        <option value="china"         {{ 'selected' if current_settings.get('qwen_region','china') == 'china' }}>China (dashscope.aliyuncs.com)</option>
+        <option value="international" {{ 'selected' if current_settings.get('qwen_region') == 'international' }}>International (dashscope-intl.aliyuncs.com)</option>
+      </select>
+      <div class="ts-input-hint">Must match the region of your DashScope API key.</div>
+    </div>
     <button type="submit" class="ts-btn ts-btn-primary" style="margin-top:1.25rem;">Save API Keys</button>
   </form>
 </div>

@@ -89,6 +89,9 @@ def save_api_keys():
         value = request.form.get(key, "").strip()
         if value:
             data[key] = value
+    qwen_region = request.form.get("qwen_region", "").strip()
+    if qwen_region in ("china", "international"):
+        data["qwen_region"] = qwen_region
     stm.set_many(data)
     flash("API keys saved.", "success")
     return redirect(url_for("settings.settings_dashboard"))

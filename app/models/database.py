@@ -369,9 +369,11 @@ class DatabaseManager:
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
 
-            CREATE INDEX IF NOT EXISTS idx_oplogs_type    ON operation_logs(operation_type);
-            CREATE INDEX IF NOT EXISTS idx_oplogs_level   ON operation_logs(level);
-            CREATE INDEX IF NOT EXISTS idx_oplogs_created ON operation_logs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_type     ON operation_logs(operation_type);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_level    ON operation_logs(level);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_created  ON operation_logs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_provider ON operation_logs(provider);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_model    ON operation_logs(model);
 
             CREATE TABLE IF NOT EXISTS run_queue (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -392,6 +394,31 @@ class DatabaseManager:
 
             CREATE INDEX IF NOT EXISTS idx_runq_run_id ON run_queue(run_id);
             CREATE INDEX IF NOT EXISTS idx_runq_status ON run_queue(status, priority, id);
+
+            -- experiment_runs
+            CREATE INDEX IF NOT EXISTS idx_er_study_id  ON experiment_runs(study_id);
+            CREATE INDEX IF NOT EXISTS idx_er_timestamp ON experiment_runs(timestamp DESC);
+
+            -- prompts
+            CREATE INDEX IF NOT EXISTS idx_prompts_study_id ON prompts(study_id);
+
+            -- translation_candidates
+            CREATE INDEX IF NOT EXISTS idx_tc_prompt_id   ON translation_candidates(prompt_id);
+            CREATE INDEX IF NOT EXISTS idx_tc_prompt_lang ON translation_candidates(prompt_id, language_id);
+
+            -- token_results
+            CREATE INDEX IF NOT EXISTS idx_tr_run_id   ON token_results(run_id);
+            CREATE INDEX IF NOT EXISTS idx_tr_model_id ON token_results(model_id);
+
+            -- pei_results / pei_group_results
+            CREATE INDEX IF NOT EXISTS idx_pei_run_id       ON pei_results(run_id);
+            CREATE INDEX IF NOT EXISTS idx_pei_group_run_id ON pei_group_results(run_id);
+
+            -- selection_score_results
+            CREATE INDEX IF NOT EXISTS idx_ssr_prompt_id ON selection_score_results(prompt_id);
+
+            -- models
+            CREATE INDEX IF NOT EXISTS idx_models_provider_id ON models(provider_id);
         """)
 
     def _seed_writing_systems(self, conn: sqlite3.Connection):

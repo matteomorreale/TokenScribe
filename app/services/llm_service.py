@@ -15,6 +15,19 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+def _is_model_not_found(error_str: str) -> bool:
+    s = error_str.lower()
+    return (
+        "not_found_error" in s
+        or ("error code: 404" in s and "model" in s)
+        or "model_not_found" in s
+        or "no such model" in s
+        or "model does not exist" in s
+        or "no longer available" in s
+        or s.startswith("404 ")
+    )
+
+
 @dataclass
 class TokenScribeCallResult:
     """Result of a single LLM API call."""
@@ -25,6 +38,7 @@ class TokenScribeCallResult:
     response_text: str = ""
     error: Optional[str] = None
     success: bool = True
+    model_not_found: bool = False
 
 
 class LLMService:
@@ -174,7 +188,8 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
 
     # ------------------------------------------------------------------
     # Anthropic
@@ -199,7 +214,8 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
 
     # ------------------------------------------------------------------
     # Google Gemini
@@ -222,7 +238,8 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
 
     # ------------------------------------------------------------------
     # DeepSeek (OpenAI-compatible API)
@@ -254,7 +271,8 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
 
     # ------------------------------------------------------------------
     # Meta Llama (via Together AI consumer API)
@@ -283,7 +301,8 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
 
     # ------------------------------------------------------------------
     # Qwen (via Alibaba Cloud DashScope — OpenAI-compatible)
@@ -293,11 +312,17 @@ class LLMService:
         api_key = self.settings.get("qwen_api_key", "")
         if not api_key:
             return TokenScribeCallResult(success=False, error="Qwen API key not configured")
+        region = self.settings.get("qwen_region", "china")
+        base_url = (
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            if region == "international"
+            else "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
         try:
             from openai import OpenAI
             client = OpenAI(
                 api_key=api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                base_url=base_url,
             )
             response = client.chat.completions.create(
                 model=model_name,
@@ -312,7 +337,8 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
 
     # ------------------------------------------------------------------
     # Mistral
@@ -338,4 +364,5 @@ class LLMService:
                 source="api_reported",
             )
         except Exception as e:
-            return TokenScribeCallResult(success=False, error=str(e))
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
