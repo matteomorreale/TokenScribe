@@ -198,6 +198,13 @@ def detail_prompt(prompt_id: int):
     latest_approved_at = _tm().get_latest_approved_at(prompt_id)
     pei_stale = (not pei_saved_at) or bool(latest_approved_at and latest_approved_at > pei_saved_at)
 
+    pending_count = sum(1 for c in candidates if c.get("status") == "candidate")
+    magi_suggest = (
+        pending_count > 0
+        or (magi_readiness.get("approved_count", 0) > 0 and magi_readiness.get("magi_count", 0) == 0)
+        or magi_readiness.get("magi_required_count", 0) > 0
+    )
+
     return render_template(
         "prompts/detail.html",
         prompt=prompt,
@@ -213,6 +220,8 @@ def detail_prompt(prompt_id: int):
         magi_readiness=magi_readiness,
         pei_stale=pei_stale,
         pei_saved_at=pei_saved_at,
+        pending_count=pending_count,
+        magi_suggest=magi_suggest,
     )
 
 

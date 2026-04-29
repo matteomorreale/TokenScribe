@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}Operation Logs{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ── Log Viewer ─────────────────────────────────────────── */
+.log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.log-toolbar select, .log-toolbar input[type="text"] {
+  padding: .35rem .6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .85rem;
+  min-width: 130px;
+}
+.log-toolbar select:focus, .log-toolbar input[type="text"]:focus {
+  outline: 2px solid var(--accent);
+}
+
+.log-stats {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.log-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .5rem .85rem;
+  font-size: .82rem;
+  color: var(--text-muted);
+}
+.log-stat-card strong { color: var(--text); font-size: 1.1rem; }
+
+/* Level badges */
+.lvl { display: inline-block; padding: .12rem .45rem; border-radius: 4px; font-size: .72rem; font-weight: 600; letter-spacing: .03em; }
+.lvl-DEBUG   { background: #1e293b; color: #94a3b8; }
+.lvl-INFO    { background: #0f3460; color: #60a5fa; }
+.lvl-WARNING { background: #3d2000; color: #f59e0b; }
+.lvl-ERROR   { background: #3b0a0a; color: #f87171; }
+
+/* Operation type pills */
+.optype { display: inline-block; padding: .1rem .4rem; border-radius: 4px; font-size: .72rem; font-weight: 500; background: var(--surface-2, #1e293b); color: var(--text-muted); }
+.optype-experiment   { background: #0d2035; color: #38bdf8; }
+.optype-magi         { background: #1a1035; color: #a78bfa; }
+.optype-translation_ai { background: #0d2a1a; color: #4ade80; }
+.optype-llm_call     { background: #1e1e2e; color: #94a3b8; }
+
+/* Log table */
+.log-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.log-table th {
+  text-align: left; padding: .5rem .6rem;
+  background: var(--surface); color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+  white-space: nowrap;
+}
+.log-table td { padding: .45rem .6rem; border-bottom: 1px solid var(--border-subtle, #1e293b); vertical-align: top; }
+.log-table tr:hover td { background: var(--surface-hover, rgba(255,255,255,.03)); }
+.log-table tr.row-ERROR td  { background: rgba(248,113,113,.04); }
+.log-table tr.row-WARNING td { background: rgba(245,158,11,.04); }
+
+.log-ts { color: var(--text-muted); white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: .75rem; }
+.log-event { font-family: 'JetBrains Mono', monospace; font-size: .78rem; color: var(--text); }
+.log-msg { color: var(--text-muted); max-width: 380px; }
+.log-dur { color: var(--text-muted); white-space: nowrap; font-size: .78rem; font-family: 'JetBrains Mono', monospace; }
+.log-dur.slow { color: #f59e0b; }
+.log-dur.very-slow { color: #f87171; }
+
+/* Expandable payload */
+.payload-toggle { cursor: pointer; font-size: .75rem; color: var(--accent); background: none; border: none; padding: 0; }
+.payload-box {
+  display: none; margin-top: .4rem;
+  background: #0d1117; border: 1px solid var(--border); border-radius: 4px;
+  padding: .6rem; max-height: 300px; overflow: auto;
+  font-family: 'JetBrains Mono', monospace; font-size: .73rem; color: #9ca3af;
+  white-space: pre-wrap; word-break: break-all;
+}
+.payload-box.open { display: block; }
+
+/* Auto-refresh toggle */
+.auto-refresh-toggle { display: flex; align-items: center; gap: .4rem; font-size: .82rem; color: var(--text-muted); cursor: pointer; }
+.auto-refresh-toggle input { cursor: pointer; }
+#refresh-indicator { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; display: none; animation: pulse 1s infinite; }
+#refresh-indicator.active { display: inline-block; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+.log-empty { padding: 2rem; text-align: center; color: var(--text-muted); font-size: .9rem; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<a href="{{ url_for('study.list_studies') }}">Home</a>
+<span>›</span>
+<span>Logs</span>
+{% endblock %}
+
+{% block topbar_actions %}
+<label class="auto-refresh-toggle" title="Auto-aggiorna ogni 5 secondi">
+  <input type="checkbox" id="auto-refresh-cb">
+  Auto-refresh
+  <span id="refresh-indicator"></span>
+</label>
+<form method="POST" action="{{ url_for('log.log_clear') }}"
+      onsubmit="return confirm('Eliminare tutti i log?');" style="display:inline;">
+  <button class="ts-btn ts-btn-ghost ts-btn-sm" style="color:#f87171;">Azzera log</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="ts-page-header">
+  <div>
+    <h1 class="ts-page-title">Operation Logs</h1>
+    <p class="ts-page-subtitle">Tutte le operazioni AI: esperimenti, MAGI, traduzioni</p>
+  </div>
+</div>
+
+<!-- Stats bar -->
+<div class="log-stats">
+  <div class="log-stat-card"><strong>{{ stats.total }}</strong> totale</div>
+  {% for lvl, cnt in stats.by_level.items() %}
+  <div class="log-stat-card"><span class="lvl lvl-{{ lvl }}">{{ lvl }}</span> <strong>{{ cnt }}</strong></div>
+  {% endfor %}
+  {% for typ, cnt in stats.by_type.items() %}
+  <div class="log-stat-card"><span class="optype optype-{{ typ }}">{{ typ }}</span> <strong>{{ cnt }}</strong></div>
+  {% endfor %}
+  {% if stats.avg_duration_ms %}
+  <div class="log-stat-card">Avg latency <strong>{{ stats.avg_duration_ms }} ms</strong></div>
+  {% endif %}
+</div>
+
+<!-- Filter toolbar -->
+<form method="GET" action="{{ url_for('log.log_list') }}" class="log-toolbar" id="filter-form">
+  <select name="operation_type" onchange="this.form.submit()">
+    <option value="">Tutti i tipi</option>
+    {% for t in distinct.operation_types %}
+    <option value="{{ t }}" {% if filters.operation_type == t %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select name="level" onchange="this.form.submit()">
+    <option value="">Tutti i livelli</option>
+    {% for l in distinct.levels %}
+    <option value="{{ l }}" {% if filters.level == l %}selected{% endif %}>{{ l }}</option>
+    {% endfor %}
+  </select>
+  <select name="provider" onchange="this.form.submit()">
+    <option value="">Tutti i provider</option>
+    {% for p in distinct.providers %}
+    <option value="{{ p }}" {% if filters.provider == p %}selected{% endif %}>{{ p }}</option>
+    {% endfor %}
+  </select>
+  <select name="model" onchange="this.form.submit()">
+    <option value="">Tutti i modelli</option>
+    {% for m in distinct.models %}
+    <option value="{{ m }}" {% if filters.model == m %}selected{% endif %}>{{ m }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="search" placeholder="Cerca in message / payload…"
+         value="{{ filters.search or '' }}"
+         style="min-width:200px;">
+  <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Filtra</button>
+  {% if filters.operation_type or filters.level or filters.provider or filters.model or filters.search %}
+  <a href="{{ url_for('log.log_list') }}" class="ts-btn ts-btn-ghost ts-btn-sm">Azzera filtri</a>
+  {% endif %}
+
+  <span style="margin-left:auto; color:var(--text-muted); font-size:.82rem;">
+    {{ total }} righe{% if total > page_size %} (mostrate {{ page_size }}){% endif %}
+  </span>
+</form>
+
+<!-- Log table -->
+<div style="overflow-x:auto;">
+  <table class="log-table" id="log-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Timestamp</th>
+        <th>Livello</th>
+        <th>Tipo</th>
+        <th>Evento</th>
+        <th>Provider / Modello</th>
+        <th>Messaggio</th>
+        <th>Durata</th>
+        <th>Contesto / Payload</th>
+      </tr>
+    </thead>
+    <tbody id="log-tbody">
+      {% if logs %}
+        {% for entry in logs %}
+        {{ _render_row(entry) }}
+        {% endfor %}
+      {% else %}
+      <tr><td colspan="9" class="log-empty">Nessun log trovato con i filtri attuali.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{% if total > page_size %}
+<p style="margin-top:.75rem; color:var(--text-muted); font-size:.82rem; text-align:center;">
+  Visualizzate le {{ page_size }} voci più recenti. Usa i filtri per restringere la ricerca.
+</p>
+{% endif %}
+{% endblock %}
+
+{% macro _render_row(entry) %}
+{% set dur = entry.duration_ms %}
+{% set dur_cls = 'very-slow' if dur and dur > 10000 else ('slow' if dur and dur > 3000 else '') %}
+<tr class="row-{{ entry.level }}">
+  <td class="log-ts" style="color:var(--text-muted);">{{ entry.id }}</td>
+  <td class="log-ts">{{ entry.created_at }}</td>
+  <td><span class="lvl lvl-{{ entry.level }}">{{ entry.level }}</span></td>
+  <td><span class="optype optype-{{ entry.operation_type }}">{{ entry.operation_type }}</span></td>
+  <td class="log-event">{{ entry.event }}</td>
+  <td style="white-space:nowrap; font-size:.78rem;">
+    {% if entry.provider %}<span style="color:var(--text);">{{ entry.provider }}</span>{% endif %}
+    {% if entry.model %}<br><span style="color:var(--text-muted); font-size:.73rem;">{{ entry.model }}</span>{% endif %}
+  </td>
+  <td class="log-msg">{{ entry.message or '' }}</td>
+  <td class="log-dur {{ dur_cls }}">
+    {% if dur %}{{ dur }} ms{% else %}—{% endif %}
+  </td>
+  <td>
+    {% if entry.context_ref or entry.payload %}
+      <button class="payload-toggle" onclick="togglePayload(this)">▶ dettagli</button>
+      <div class="payload-box">
+        {%- if entry.context_ref -%}
+<b>context:</b> {{ entry.context_ref | tojson(indent=2) }}
+        {%- endif -%}
+        {%- if entry.payload -%}
+
+<b>payload:</b> {{ entry.payload | tojson(indent=2) }}
+        {%- endif -%}
+      </div>
+    {% else %}
+      <span style="color:var(--text-muted);">—</span>
+    {% endif %}
+  </td>
+</tr>
+{% endmacro %}
+
+{% block extra_scripts %}
+<script>
+function togglePayload(btn) {
+  const box = btn.nextElementSibling;
+  const open = box.classList.toggle('open');
+  btn.textContent = open ? '▼ dettagli' : '▶ dettagli';
+}
+
+// ── Auto-refresh ──────────────────────────────────────────
+let _refreshTimer = null;
+
+function buildApiUrl() {
+  const params = new URLSearchParams(window.location.search);
+  params.set('limit', '{{ page_size }}');
+  params.set('offset', '0');
+  return '{{ url_for("log.log_api") }}?' + params.toString();
+}
+
+function renderRow(e) {
+  const dur = e.duration_ms;
+  const durCls = dur > 10000 ? 'very-slow' : (dur > 3000 ? 'slow' : '');
+  const durStr = dur ? `${dur} ms` : '—';
+  const lvl = e.level || 'INFO';
+  const opType = e.operation_type || '';
+  let contextStr = '';
+  if (e.context_ref) contextStr += `<b>context:</b> ${JSON.stringify(e.context_ref, null, 2)}\n`;
+  if (e.payload)     contextStr += `<b>payload:</b> ${JSON.stringify(e.payload, null, 2)}`;
+  const hasDetail = contextStr.trim().length > 0;
+  const detailCell = hasDetail
+    ? `<button class="payload-toggle" onclick="togglePayload(this)">▶ dettagli</button><div class="payload-box">${contextStr}</div>`
+    : '<span style="color:var(--text-muted);">—</span>';
+  const modelStr = e.model ? `<br><span style="color:var(--text-muted);font-size:.73rem;">${e.model}</span>` : '';
+  return `
+    <tr class="row-${lvl}">
+      <td class="log-ts" style="color:var(--text-muted);">${e.id}</td>
+      <td class="log-ts">${e.created_at}</td>
+      <td><span class="lvl lvl-${lvl}">${lvl}</span></td>
+      <td><span class="optype optype-${opType}">${opType}</span></td>
+      <td class="log-event">${e.event || ''}</td>
+      <td style="white-space:nowrap;font-size:.78rem;">${e.provider || ''}${modelStr}</td>
+      <td class="log-msg">${(e.message || '').replace(/</g,'&lt;')}</td>
+      <td class="log-dur ${durCls}">${durStr}</td>
+      <td>${detailCell}</td>
+    </tr>`;
+}
+
+async function refreshLogs() {
+  try {
+    const resp = await fetch(buildApiUrl());
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const tbody = document.getElementById('log-tbody');
+    if (!data.logs || data.logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="log-empty">Nessun log trovato.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.logs.map(renderRow).join('');
+  } catch (_) { /* silent */ }
+}
+
+const cb = document.getElementById('auto-refresh-cb');
+const indicator = document.getElementById('refresh-indicator');
+cb.addEventListener('change', () => {
+  if (cb.checked) {
+    indicator.classList.add('active');
+    _refreshTimer = setInterval(refreshLogs, 5000);
+  } else {
+    indicator.classList.remove('active');
+    clearInterval(_refreshTimer);
+    _refreshTimer = null;
+  }
+});
+</script>
+{% endblock %}

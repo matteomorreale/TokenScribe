@@ -771,3 +771,43 @@ details.ts-details[open] > summary { background: var(--ts-border); }
   .ts-grid-2, .ts-grid-3, .ts-grid-4 { grid-template-columns: 1fr; }
   .ts-content { padding: 1rem; }
 }
+
+/* ── MAGI System Status Light ────────────────────────────────────── */
+.ts-magi-light {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .3rem .7rem;
+  border-radius: 2rem;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .03em;
+  cursor: default;
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(255,255,255,.04);
+  color: var(--ts-text-muted);
+  user-select: none;
+}
+.ts-magi-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: ts-magi-pulse 2.4s ease-in-out infinite;
+}
+.ts-magi-green  .ts-magi-dot { background: var(--ts-success); }
+.ts-magi-orange .ts-magi-dot { background: var(--ts-warning); }
+.ts-magi-red    .ts-magi-dot { background: var(--ts-error); animation: none; }
+.ts-magi-green  { border-color: rgba(16,185,129,.3); }
+.ts-magi-orange { border-color: rgba(245,158,11,.3); }
+.ts-magi-red    { border-color: rgba(239,68,68,.3); }
+
+@keyframes ts-magi-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .35; }
+}
+
+@keyframes ts-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .45; }
+}

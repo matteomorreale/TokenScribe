@@ -7,6 +7,11 @@
 {% endblock %}
 
 {% block topbar_actions %}
+{% if magi_status %}
+<span class="ts-magi-light ts-magi-{{ magi_status.status }}" title="{{ magi_status.tooltip }}">
+  <span class="ts-magi-dot"></span>MAGI
+</span>
+{% endif %}
 <a href="{{ url_for('study.new_study') }}" class="ts-btn ts-btn-primary">
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
   New Study

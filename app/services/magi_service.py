@@ -18,6 +18,84 @@ logger = logging.getLogger(__name__)
 JUDGE_NAMES = ["balthasar", "caspar", "melchior"]
 MAX_RETRIES = 3
 
+_PROVIDER_KEY_MAP = {
+    "openai":    "openai_api_key",
+    "anthropic": "anthropic_api_key",
+    "google":    "google_api_key",
+    "deepseek":  "deepseek_api_key",
+    "meta":      "meta_api_key",
+    "qwen":      "qwen_api_key",
+    "mistral":   "mistral_api_key",
+}
+
+
+def get_magi_status(settings: dict, em) -> dict:
+    """
+    Returns MAGI system status for display as a traffic light.
+
+    status: 'green' = all 3 judges configured and API keys present
+            'orange' = 1-2 judges OK
+            'red'    = no judges configured or no API keys
+
+    Requires settings dict (from SettingsModel.get_all()) and
+    an ExperimentModel instance (for get_model_by_id).
+    """
+    judge_defs = [
+        ("magi_judge_balthasar_id", "Balthasar"),
+        ("magi_judge_caspar_id", "Caspar"),
+        ("magi_judge_melchior_id", "Melchior"),
+    ]
+    judges = []
+    for setting_key, name in judge_defs:
+        mid = settings.get(setting_key)
+        if not mid:
+            judges.append({
+                "name": name, "model_name": None, "provider": None,
+                "api_key_ok": False, "configured": False,
+                "reason": "Modello giudice non configurato",
+            })
+            continue
+        model_info = em.get_model_by_id(int(mid))
+        if not model_info:
+            judges.append({
+                "name": name, "model_name": f"ID:{mid} (non trovato)",
+                "provider": None, "api_key_ok": False, "configured": False,
+                "reason": f"Modello ID:{mid} non trovato nel DB",
+            })
+            continue
+        provider = model_info.get("provider_name", "")
+        api_key_setting = _PROVIDER_KEY_MAP.get(provider, f"{provider}_api_key")
+        api_key_ok = bool((settings.get(api_key_setting) or "").strip())
+        reason = "OK" if api_key_ok else f"API key {provider} non configurata"
+        judges.append({
+            "name": name,
+            "model_name": model_info.get("name", ""),
+            "provider": provider,
+            "api_key_ok": api_key_ok,
+            "configured": True,
+            "reason": reason,
+        })
+
+    active = [j for j in judges if j["configured"] and j["api_key_ok"]]
+    active_count = len(active)
+
+    if active_count == 3:
+        status = "green"
+        tooltip = (
+            "MAGI System online — tutti e 3 i giudici attivi: "
+            + ", ".join(f"{j['name']} ({j['model_name']})" for j in judges)
+        )
+    elif active_count > 0:
+        status = "orange"
+        problems = [j["name"] + ": " + j["reason"] for j in judges if not (j["configured"] and j["api_key_ok"])]
+        tooltip = "MAGI System parzialmente attivo — " + "; ".join(problems)
+    else:
+        status = "red"
+        problems = [j["name"] + ": " + j["reason"] for j in judges]
+        tooltip = "MAGI System offline — " + "; ".join(problems)
+
+    return {"status": status, "judges": judges, "tooltip": tooltip, "active_count": active_count}
+
 _JUDGE_PROMPT = """\
 You are a translation quality evaluator for a scientific linguistic experiment.
 
@@ -71,6 +149,8 @@ class MAGIService:
         ler_char: float,
         llm_service,
         model_info: dict,
+        log_service=None,
+        context_ref: dict | None = None,
     ) -> dict:
         """Call one judge with up to MAX_RETRIES attempts. Returns the first successful parse."""
         prompt = _JUDGE_PROMPT.format(
@@ -82,21 +162,86 @@ class MAGIService:
         )
         last_verdict = None
         for attempt in range(1, MAX_RETRIES + 1):
+            if log_service:
+                log_service.log(
+                    operation_type="magi",
+                    event="judge_attempt",
+                    level="DEBUG",
+                    provider=model_info.get("provider_name"),
+                    model=model_info.get("name"),
+                    message=(
+                        f"[MAGI] {model_info.get('name')} attempt {attempt}/{MAX_RETRIES}"
+                    ),
+                    context_ref=context_ref,
+                    payload={
+                        "attempt": attempt,
+                        "prompt_preview": prompt[:300],
+                        "language": language,
+                        "sfs": sfs,
+                        "ler_char": ler_char,
+                    },
+                )
+
             verdict = self._call_once(prompt, model_info, llm_service, attempt)
             last_verdict = verdict
+
             if verdict["score"] is not None:
                 if attempt > 1:
                     logger.info(
                         "[MAGI] %s (%s) succeeded on attempt %d/3",
                         model_info["name"], model_info["name"], attempt,
                     )
+                if log_service:
+                    log_service.log(
+                        operation_type="magi",
+                        event="judge_success",
+                        level="INFO",
+                        provider=model_info.get("provider_name"),
+                        model=model_info.get("name"),
+                        message=(
+                            f"[MAGI] {model_info.get('name')} → score={verdict['score']:.4f} "
+                            f"(sf={verdict.get('semantic_fidelity')} "
+                            f"rm={verdict.get('register_match')} "
+                            f"na={verdict.get('naturalness')}) "
+                            f"after {attempt} attempt(s)"
+                        ),
+                        context_ref=context_ref,
+                        payload={
+                            "attempt": attempt,
+                            "score": verdict["score"],
+                            "semantic_fidelity": verdict.get("semantic_fidelity"),
+                            "register_match": verdict.get("register_match"),
+                            "naturalness": verdict.get("naturalness"),
+                            "raw_response": (verdict.get("raw_response") or "")[:500],
+                            "parse_error": verdict.get("error"),
+                        },
+                    )
                 return verdict
-            if attempt < MAX_RETRIES:
-                logger.warning(
-                    "[MAGI] (%s) attempt %d/%d failed — error: %s | raw: %r — retrying",
-                    model_info["name"], attempt, MAX_RETRIES,
-                    verdict.get("error"), verdict.get("raw_response"),
+
+            logger.warning(
+                "[MAGI] (%s) attempt %d/%d failed — error: %s | raw: %r — retrying",
+                model_info["name"], attempt, MAX_RETRIES,
+                verdict.get("error"), verdict.get("raw_response"),
+            )
+            if log_service:
+                log_service.log(
+                    operation_type="magi",
+                    event="judge_retry" if attempt < MAX_RETRIES else "judge_failed",
+                    level="WARNING",
+                    provider=model_info.get("provider_name"),
+                    model=model_info.get("name"),
+                    message=(
+                        f"[MAGI] {model_info.get('name')} attempt {attempt}/{MAX_RETRIES} failed: "
+                        f"{verdict.get('error')}"
+                    ),
+                    context_ref=context_ref,
+                    payload={
+                        "attempt": attempt,
+                        "error": verdict.get("error"),
+                        "raw_response": (verdict.get("raw_response") or "")[:500],
+                    },
                 )
+
         return last_verdict
 
     def _call_once(self, prompt: str, model_info: dict, llm_service, attempt: int) -> dict:
@@ -108,6 +253,7 @@ class MAGIService:
                 prompt_text=prompt,
                 cost_per_input=0.0,
                 cost_per_output=0.0,
+                is_reasoning=bool(model_info.get("is_reasoning", 0)),
             )
             if result.success:
                 raw = result.response_text or ""
@@ -156,16 +302,39 @@ class MAGIService:
         ler_char: float,
         llm_service,
         judge_models: list,
+        log_service=None,
+        context_ref: dict | None = None,
     ) -> dict:
         """
         Call three judges sequentially and aggregate results.
         judge_models: list of exactly 3 model_info dicts (Balthasar, Caspar, Melchior).
         Returns: {judges: {name: verdict}, magi_score, magi_disagreement}
         """
+        if log_service:
+            log_service.log(
+                operation_type="magi",
+                event="panel_start",
+                level="INFO",
+                message=f"[MAGI] Panel started — language={language} sfs={sfs:.4f} ler={ler_char:.3f}",
+                context_ref=context_ref,
+                payload={
+                    "language": language,
+                    "sfs": sfs,
+                    "ler_char": ler_char,
+                    "judges": [m.get("name") for m in judge_models[:3]],
+                    "original_preview": (original or "")[:200],
+                    "translation_preview": (translation or "")[:200],
+                },
+            )
+
         judges = {}
         for name, model_info in zip(JUDGE_NAMES, judge_models[:3]):
+            judge_ctx = {**(context_ref or {}), "judge_name": name}
             verdict = self.evaluate(
-                original, translation, language, sfs, ler_char, llm_service, model_info
+                original, translation, language, sfs, ler_char,
+                llm_service, model_info,
+                log_service=log_service,
+                context_ref=judge_ctx,
             )
             judges[name] = verdict
             if verdict["score"] is not None:
@@ -180,11 +349,33 @@ class MAGIService:
                     verdict.get("attempts", 1), verdict.get("raw_response"),
                 )
             else:
-                logger.warning(
-                    "[MAGI] %s (%s) → FAILED after %d attempt(s) | error: %s | raw: %r",
-                    name, model_info["name"], verdict.get("attempts", MAX_RETRIES),
-                    verdict.get("error"), verdict.get("raw_response"),
+                offline_reason = (
+                    f"Judge {name} ({model_info.get('name', '')}) "
+                    f"failed after {MAX_RETRIES} attempt(s): {verdict.get('error', 'unknown error')}"
                 )
+                logger.error("[MAGI] %s — panel aborted: %s", name, offline_reason)
+                if log_service:
+                    log_service.log(
+                        operation_type="magi",
+                        event="panel_aborted",
+                        level="ERROR",
+                        provider=model_info.get("provider_name"),
+                        model=model_info.get("name"),
+                        message=f"[MAGI] Panel aborted — {offline_reason}",
+                        context_ref=context_ref,
+                        payload={
+                            "judge_name": name,
+                            "error": verdict.get("error"),
+                            "judges_evaluated": list(judges.keys()),
+                        },
+                    )
+                return {
+                    "judges": judges,
+                    "magi_score": None,
+                    "magi_disagreement": False,
+                    "magi_offline": True,
+                    "magi_offline_reason": offline_reason,
+                }
 
         valid = [v["score"] for v in judges.values() if v["score"] is not None]
         magi_score = round(statistics.mean(valid), 6) if valid else None
@@ -194,10 +385,44 @@ class MAGIService:
             else False
         )
 
+        if log_service:
+            log_service.log(
+                operation_type="magi",
+                event="panel_complete",
+                level="INFO" if magi_score is not None else "WARNING",
+                message=(
+                    f"[MAGI] Panel complete — score={magi_score:.4f}" if magi_score is not None
+                    else "[MAGI] Panel complete — all judges failed"
+                )
+                + (" (DISAGREEMENT)" if magi_disagreement else ""),
+                context_ref=context_ref,
+                payload={
+                    "magi_score": magi_score,
+                    "magi_disagreement": magi_disagreement,
+                    "valid_judge_count": len(valid),
+                    "judge_scores": {
+                        judge_name: v.get("score")
+                        for judge_name, v in judges.items()
+                    },
+                    "judge_details": {
+                        judge_name: {
+                            "semantic_fidelity": v.get("semantic_fidelity"),
+                            "register_match": v.get("register_match"),
+                            "naturalness": v.get("naturalness"),
+                            "attempts": v.get("attempts"),
+                            "error": v.get("error"),
+                        }
+                        for judge_name, v in judges.items()
+                    },
+                },
+            )
+
         return {
             "judges": judges,
             "magi_score": magi_score,
             "magi_disagreement": magi_disagreement,
+            "magi_offline": False,
+            "magi_offline_reason": None,
         }
 
     @staticmethod

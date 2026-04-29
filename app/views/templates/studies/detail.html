@@ -9,6 +9,11 @@
 {% endblock %}
 
 {% block topbar_actions %}
+{% if magi_status %}
+<span class="ts-magi-light ts-magi-{{ magi_status.status }}" title="{{ magi_status.tooltip }}">
+  <span class="ts-magi-dot"></span>MAGI
+</span>
+{% endif %}
 <a href="{{ url_for('study.edit_study', study_id=study.id) }}" class="ts-btn ts-btn-secondary">Edit</a>
 <a href="{{ url_for('study.new_study') }}" class="ts-btn ts-btn-secondary">New Study</a>
 {% endblock %}

@@ -5,10 +5,13 @@ Author: Matteo Morreale
 Unified interface to all supported LLM providers.
 Providers: OpenAI, Anthropic, Google Gemini, DeepSeek, Meta Llama, Qwen, Mistral
 All calls return a TokenScribeCallResult with token counts and cost.
+
+Optional LogService injection: pass log_service= to __init__ to enable non-blocking
+operation logging. Each call records provider, model, tokens, cost, duration, response.
 """
 
-import os
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -38,13 +41,13 @@ class LLMService:
     PROVIDER_QWEN = "qwen"
     PROVIDER_MISTRAL = "mistral"
 
-    def __init__(self, settings: dict):
+    def __init__(self, settings: dict, log_service=None):
         """
         settings: dict of key→value from SettingsModel.get_all()
-        Expected keys: openai_api_key, anthropic_api_key, google_api_key,
-                       deepseek_api_key, meta_api_key, qwen_api_key, mistral_api_key
+        log_service: optional LogService instance for non-blocking operation logging
         """
         self.settings = settings
+        self._log = log_service
 
     def call(
         self,
@@ -53,8 +56,14 @@ class LLMService:
         prompt_text: str,
         cost_per_input: float = 0.0,
         cost_per_output: float = 0.0,
+        is_reasoning: bool = False,
+        _ctx: Optional[dict] = None,
     ) -> TokenScribeCallResult:
-        """Dispatch to the appropriate provider handler."""
+        """
+        Dispatch to the appropriate provider handler.
+        is_reasoning: when True, provider-specific reasoning budget handling is applied.
+        _ctx: optional context dict (run_id, prompt_id, language, etc.) stored in logs.
+        """
         dispatch = {
             self.PROVIDER_OPENAI: self._call_openai,
             self.PROVIDER_ANTHROPIC: self._call_anthropic,
@@ -66,16 +75,80 @@ class LLMService:
         }
         handler = dispatch.get(provider)
         if not handler:
-            return TokenScribeCallResult(
+            err = TokenScribeCallResult(
                 success=False, error=f"Unknown provider: {provider}"
             )
-        result = handler(model_name, prompt_text)
+            self._emit_error(provider, model_name, prompt_text, err.error, 0, _ctx)
+            return err
+
+        t0 = time.monotonic()
+        if provider == self.PROVIDER_DEEPSEEK:
+            result = handler(model_name, prompt_text, is_reasoning=is_reasoning)
+        else:
+            result = handler(model_name, prompt_text)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
         if result.success:
             result.cost = (
                 result.input_tokens * cost_per_input
                 + result.output_tokens * cost_per_output
             )
+            self._emit_success(provider, model_name, prompt_text, result, duration_ms, _ctx)
+        else:
+            self._emit_error(provider, model_name, prompt_text, result.error, duration_ms, _ctx)
+
         return result
+
+    # ------------------------------------------------------------------
+    # Logging helpers
+    # ------------------------------------------------------------------
+
+    def _emit_success(self, provider, model_name, prompt_text, result, duration_ms, ctx):
+        if not self._log:
+            return
+        op_type = (ctx or {}).get("operation_type", "llm_call")
+        self._log.log(
+            operation_type=op_type,
+            event="llm_call_success",
+            level="INFO",
+            provider=provider,
+            model=model_name,
+            message=(
+                f"{provider}/{model_name}: "
+                f"{result.input_tokens} in / {result.output_tokens} out "
+                f"— {duration_ms} ms"
+            ),
+            context_ref=ctx,
+            payload={
+                "prompt_preview": (prompt_text or "")[:500],
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "cost_usd": round(result.cost, 8),
+                "source": result.source,
+                "response_preview": (result.response_text or "")[:1000],
+                "response_length": len(result.response_text or ""),
+            },
+            duration_ms=duration_ms,
+        )
+
+    def _emit_error(self, provider, model_name, prompt_text, error, duration_ms, ctx):
+        if not self._log:
+            return
+        op_type = (ctx or {}).get("operation_type", "llm_call")
+        self._log.log(
+            operation_type=op_type,
+            event="llm_call_error",
+            level="ERROR",
+            provider=provider,
+            model=model_name,
+            message=f"{provider}/{model_name}: {error}",
+            context_ref=ctx,
+            payload={
+                "prompt_preview": (prompt_text or "")[:500],
+                "error": error,
+            },
+            duration_ms=duration_ms,
+        )
 
     # ------------------------------------------------------------------
     # OpenAI
@@ -155,7 +228,7 @@ class LLMService:
     # DeepSeek (OpenAI-compatible API)
     # ------------------------------------------------------------------
 
-    def _call_deepseek(self, model_name: str, prompt_text: str) -> TokenScribeCallResult:
+    def _call_deepseek(self, model_name: str, prompt_text: str, is_reasoning: bool = False) -> TokenScribeCallResult:
         api_key = self.settings.get("deepseek_api_key", "")
         if not api_key:
             return TokenScribeCallResult(success=False, error="DeepSeek API key not configured")
@@ -165,10 +238,13 @@ class LLMService:
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1",
             )
+            # Reasoning models (e.g. deepseek-v4-pro) consume reasoning tokens from the
+            # shared max_tokens budget. Use a larger cap so output text has room to breathe.
+            max_tokens = 4096 if is_reasoning else 512
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
-                max_tokens=512,
+                max_tokens=max_tokens,
             )
             usage = response.usage
             return TokenScribeCallResult(

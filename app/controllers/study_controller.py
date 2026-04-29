@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timezone
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response
 from app.models import StudyModel
+from app.services import get_magi_status
 
 study_bp = Blueprint("study", __name__, url_prefix="/studies")
 
@@ -22,7 +23,11 @@ def list_studies():
     for s in studies:
         s["prompt_count"] = model.get_prompt_count(s["id"])
         s["run_count"] = model.get_run_count(s["id"])
-    return render_template("studies/list.html", studies=studies)
+    from app.models import SettingsModel, ExperimentModel
+    settings = SettingsModel(current_app.config["DB"]).get_all()
+    em = ExperimentModel(current_app.config["DB"])
+    magi_status = get_magi_status(settings, em)
+    return render_template("studies/list.html", studies=studies, magi_status=magi_status)
 
 
 @study_bp.route("/new", methods=["GET", "POST"])
@@ -47,11 +52,14 @@ def detail_study(study_id: int):
     if not study:
         flash("Study not found.", "error")
         return redirect(url_for("study.list_studies"))
-    from app.models import PromptModel, ExperimentModel
+    from app.models import PromptModel, ExperimentModel, SettingsModel
+    em = ExperimentModel(current_app.config["DB"])
     prompts = PromptModel(current_app.config["DB"]).get_by_study(study_id)
-    runs = ExperimentModel(current_app.config["DB"]).get_runs_by_study(study_id)
+    runs = em.get_runs_by_study(study_id)
+    settings = SettingsModel(current_app.config["DB"]).get_all()
+    magi_status = get_magi_status(settings, em)
     return render_template(
-        "studies/detail.html", study=study, prompts=prompts, runs=runs
+        "studies/detail.html", study=study, prompts=prompts, runs=runs, magi_status=magi_status
     )
 
 

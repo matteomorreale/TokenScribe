@@ -397,6 +397,127 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def update_run_status(self, run_id: int, status: str) -> None:
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE experiment_runs SET status = ? WHERE id = ?",
+                (status, run_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def insert_pei_group_partial(
+        self,
+        run_id: int,
+        prompt_id: int,
+        group_type: str,
+        group_value: str,
+        language_count: int,
+        cv_char: float,
+        cv_word: float,
+        cv_token: float,
+        pei: float,
+        pei_delta_vs_global: float,
+        pei_band: str,
+    ) -> int:
+        """Inserisce un record pei_group_results senza baseline (calcolata da finalize_pei_groups)."""
+        conn = self.db.get_connection()
+        try:
+            cur = conn.execute(
+                """INSERT INTO pei_group_results
+                   (run_id, prompt_id, group_type, group_value, language_count,
+                    cv_char_length, cv_word_count, cv_token_count, pei,
+                    pei_delta_vs_global, baseline_pei, pei_delta_vs_group, pei_band)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)""",
+                (
+                    run_id, prompt_id, group_type, group_value, language_count,
+                    cv_char, cv_word, cv_token, pei,
+                    pei_delta_vs_global, pei_band,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def update_pei_group_baselines(self, run_id: int) -> None:
+        """Calcola e aggiorna baseline_pei e pei_delta_vs_group per tutti i gruppi della run."""
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """UPDATE pei_group_results
+                   SET baseline_pei = (
+                       SELECT AVG(g2.pei) FROM pei_group_results g2
+                       WHERE g2.run_id = pei_group_results.run_id
+                         AND g2.group_type = pei_group_results.group_type
+                         AND g2.group_value = pei_group_results.group_value
+                   )
+                   WHERE run_id = ?""",
+                (run_id,),
+            )
+            conn.execute(
+                """UPDATE pei_group_results
+                   SET pei_delta_vs_group = ROUND(pei - baseline_pei, 6)
+                   WHERE run_id = ? AND baseline_pei IS NOT NULL""",
+                (run_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_run_snapshot_inputs(self, run_id: int, prompt_id: int) -> list[dict]:
+        """
+        Restituisce i testi (base_text inglese + traduzioni approvate snapshot) per un prompt
+        in una run, con i metadati di lingua necessari per il calcolo PEI.
+        """
+        conn = self.db.get_connection()
+        try:
+            # Inglese (base_text del prompt)
+            prompt_row = conn.execute(
+                "SELECT base_text FROM prompts WHERE id = ?", (prompt_id,)
+            ).fetchone()
+            en_row = conn.execute(
+                "SELECT id, name, code, script_group, morphology_group FROM languages WHERE code = 'en'"
+            ).fetchone()
+
+            inputs = []
+            if prompt_row and en_row:
+                inputs.append({
+                    "language_id":       int(en_row["id"]),
+                    "language_name":     en_row["name"],
+                    "language_code":     en_row["code"],
+                    "script_group":      en_row["script_group"] or "alphabetic",
+                    "morphology_group":  en_row["morphology_group"] or "",
+                    "text":              prompt_row["base_text"],
+                })
+
+            # Traduzioni dalla snapshot
+            rows = conn.execute(
+                """SELECT tc.text,
+                          l.id as language_id, l.name as language_name,
+                          l.code as language_code,
+                          l.script_group, l.morphology_group
+                   FROM run_translation_snapshot rts
+                   JOIN translation_candidates tc ON tc.id = rts.candidate_id
+                   JOIN languages l ON l.id = rts.language_id
+                   WHERE rts.run_id = ? AND rts.prompt_id = ? AND l.code != 'en'""",
+                (run_id, prompt_id),
+            ).fetchall()
+            for r in rows:
+                inputs.append({
+                    "language_id":      int(r["language_id"]),
+                    "language_name":    r["language_name"],
+                    "language_code":    r["language_code"],
+                    "script_group":     r["script_group"] or "alphabetic",
+                    "morphology_group": r["morphology_group"] or "",
+                    "text":             r["text"],
+                })
+            return inputs
+        finally:
+            conn.close()
+
     def get_translation_scores_by_run(self, run_id: int) -> list:
         conn = self.db.get_connection()
         try:

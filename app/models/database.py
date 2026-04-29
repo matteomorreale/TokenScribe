@@ -155,6 +155,18 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        try:
+            cur = conn.execute("PRAGMA table_info(experiment_runs)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "status" not in columns:
+                conn.execute(
+                    "ALTER TABLE experiment_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'"
+                )
+                # Runs that already exist without a queue are completed by definition
+                conn.execute("UPDATE experiment_runs SET status = 'completed'")
+        except sqlite3.Error:
+            pass
+
         # Seed default MAGI judge settings (only if not yet configured)
         try:
             judge_seeds = [
@@ -342,6 +354,44 @@ class DatabaseManager:
                 value      TEXT,
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
+
+            CREATE TABLE IF NOT EXISTS operation_logs (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_type  TEXT NOT NULL,
+                event           TEXT NOT NULL,
+                level           TEXT NOT NULL DEFAULT 'INFO',
+                provider        TEXT,
+                model           TEXT,
+                context_ref     TEXT,
+                message         TEXT,
+                payload         TEXT,
+                duration_ms     INTEGER,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_oplogs_type    ON operation_logs(operation_type);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_level   ON operation_logs(level);
+            CREATE INDEX IF NOT EXISTS idx_oplogs_created ON operation_logs(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS run_queue (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id         INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                operation_type TEXT NOT NULL,
+                item_key       TEXT NOT NULL,
+                payload        TEXT NOT NULL DEFAULT '{}',
+                status         TEXT NOT NULL DEFAULT 'pending'
+                               CHECK(status IN ('pending','running','done','error','timeout')),
+                priority       INTEGER NOT NULL DEFAULT 0,
+                created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                started_at     TEXT,
+                completed_at   TEXT,
+                error_message  TEXT,
+                retry_count    INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(run_id, operation_type, item_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_runq_run_id ON run_queue(run_id);
+            CREATE INDEX IF NOT EXISTS idx_runq_status ON run_queue(status, priority, id);
         """)
 
     def _seed_writing_systems(self, conn: sqlite3.Connection):

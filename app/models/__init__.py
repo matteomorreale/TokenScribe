@@ -10,6 +10,8 @@ from .translation_model import TranslationModel
 from .experiment_model import ExperimentModel
 from .settings_model import SettingsModel
 from .selection_score_model import SelectionScoreModel
+from .log_model import LogModel
+from .queue_model import QueueModel
 
 __all__ = [
     "DatabaseManager",
@@ -19,4 +21,6 @@ __all__ = [
     "ExperimentModel",
     "SettingsModel",
     "SelectionScoreModel",
+    "LogModel",
+    "QueueModel",
 ]

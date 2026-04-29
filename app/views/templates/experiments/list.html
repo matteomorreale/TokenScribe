@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Experiments{% endblock %}
 {% block breadcrumb %}<span class="current">Experiments</span>{% endblock %}
+{% block topbar_actions %}
+{% if magi_status %}
+<span class="ts-magi-light ts-magi-{{ magi_status.status }}" title="{{ magi_status.tooltip }}">
+  <span class="ts-magi-dot"></span>MAGI
+</span>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="ts-page-header">
   <div>
@@ -13,14 +20,30 @@
   <div class="ts-table-wrap">
     <table class="ts-table">
       <thead>
-        <tr><th>Run ID</th><th>Study</th><th>Timestamp</th><th>Results</th><th>Notes</th><th>Actions</th></tr>
+        <tr><th>Run ID</th><th>Study</th><th>Timestamp</th><th>Status</th><th>Results</th><th>Notes</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for r in runs %}
+        {% set st = r.status or 'completed' %}
         <tr>
           <td>#{{ r.id }}</td>
           <td><a href="{{ url_for('study.detail_study', study_id=r.study_id) }}">{{ r.study_name }}</a></td>
           <td style="color:var(--ts-text-muted); font-size:0.8rem;">{{ r.timestamp }}</td>
+          <td>
+            {% if st == 'completed' %}
+              <span class="ts-badge ts-badge-approved">completed</span>
+            {% elif st == 'running' %}
+              <span class="ts-badge ts-badge-info" style="animation:ts-pulse 1.5s infinite;">running</span>
+            {% elif st == 'queued' %}
+              <span class="ts-badge ts-badge-pending">queued</span>
+            {% elif st == 'partial' %}
+              <span class="ts-badge" style="background:var(--ts-warning,#f59e0b);color:#000;">partial</span>
+            {% elif st == 'failed' %}
+              <span class="ts-badge ts-badge-rejected">failed</span>
+            {% else %}
+              <span class="ts-badge ts-badge-pending">{{ st }}</span>
+            {% endif %}
+          </td>
           <td><span class="ts-badge ts-badge-info">{{ r.result_count }}</span></td>
           <td style="color:var(--ts-text-muted);">{{ r.notes or '—' }}</td>
           <td>

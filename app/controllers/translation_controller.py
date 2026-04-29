@@ -144,7 +144,8 @@ def ai_translate(prompt_id: int):
         return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
 
     settings = _setm().get_all()
-    llm = LLMService(settings)
+    log_svc = current_app.config.get("LOG_SERVICE")
+    llm = LLMService(settings, log_service=log_svc)
     model_name = "gpt-5.5"
 
     languages = _tm().get_all_languages()
@@ -231,7 +232,13 @@ def ai_translate(prompt_id: int):
             structural_direction=structural_direction,
         )
 
-        result = llm.call("openai", model_name, prompt_text)
+        ai_ctx = {
+            "operation_type": "translation_ai",
+            "prompt_id": prompt_id,
+            "language": lang.get("name", ""),
+            "language_code": lang.get("code", ""),
+        }
+        result = llm.call("openai", model_name, prompt_text, _ctx=ai_ctx)
         if not result.success:
             raise RuntimeError(f"AI error ({lang['name']}): {result.error}")
 
@@ -362,7 +369,7 @@ def ai_translate(prompt_id: int):
     last_by_lang: dict[int, dict] = {l["id"]: {"translation": None, "sfs": None} for l in langs}
 
     max_set_rounds = 8
-    candidates_per_round = 2
+    candidates_per_round = max(1, min(5, request.form.get("candidates_per_lang", type=int) or 2))
     regen_lang_ids = {l["id"] for l in langs}
     accepted_selection = None
     accepted_pei = None
@@ -619,14 +626,22 @@ def compute_selection_scores(prompt_id: int):
     judge_models = [m for m in judge_models if m]
 
     panel_ran = 0
+    magi_went_offline = False
     if len(judge_models) == 3:
         panel_candidates = result if force_magi else [c for c in result if c.get("magi_required")]
         if panel_candidates:
             settings = _setm().get_all()
-            llm = LLMService(settings)
+            log_svc_magi = current_app.config.get("LOG_SERVICE")
+            llm = LLMService(settings, log_service=log_svc_magi)
             magi_svc = MAGIService()
             original = prompt["base_text"] if prompt else ""
             for c in panel_candidates:
+                magi_ctx = {
+                    "operation_type": "magi",
+                    "prompt_id": prompt_id,
+                    "candidate_id": c.get("id"),
+                    "language": c.get("language_name", ""),
+                }
                 panel = magi_svc.run_panel(
                     original=original,
                     translation=c.get("text", ""),
@@ -635,7 +650,17 @@ def compute_selection_scores(prompt_id: int):
                     ler_char=c.get("ler_char") or 1.0,
                     llm_service=llm,
                     judge_models=judge_models,
+                    log_service=log_svc_magi,
+                    context_ref=magi_ctx,
                 )
+                if panel.get("magi_offline"):
+                    magi_went_offline = True
+                    flash(
+                        f"MAGI System offline — {panel.get('magi_offline_reason', 'errore sconosciuto')}. "
+                        "Elaborazione interrotta.",
+                        "error",
+                    )
+                    break
                 ssm.update_magi_result(
                     candidate_id=c["id"],
                     magi_score=panel["magi_score"],
@@ -648,13 +673,15 @@ def compute_selection_scores(prompt_id: int):
     msg = f"MAGI Phase 1: {len(result)} candidati classificati (λ=0.5, ν=0.5, PEI={pei:.4f})"
     if excluded:
         msg += f" — {excluded} esclusi (nessun SFS)"
-    if panel_ran:
+    if magi_went_offline:
+        msg += f" · Phase 2: MAGI offline dopo {panel_ran} candidati"
+    elif panel_ran:
         msg += f" · Phase 2: {panel_ran} candidati valutati dai giudici"
     elif len(judge_models) == 3 and not panel_ran:
         msg += " · Phase 2: nessun candidato richiede i giudici"
     elif force_magi and len(judge_models) < 3:
         msg += " · Phase 2: seleziona 3 modelli giudice per attivare il panel"
-    flash(msg, "success")
+    flash(msg, "success" if not magi_went_offline else "warning")
     return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
 
 

@@ -6,6 +6,11 @@
 <span class="current">Run #{{ run.id }}</span>
 {% endblock %}
 {% block topbar_actions %}
+{% if magi_status %}
+<span class="ts-magi-light ts-magi-{{ magi_status.status }}" title="{{ magi_status.tooltip }}">
+  <span class="ts-magi-dot"></span>MAGI
+</span>
+{% endif %}
 <a href="{{ url_for('report.export_csv') }}?run_id={{ run.id }}" class="ts-btn ts-btn-secondary">Export CSV</a>
 <a href="{{ url_for('report.export_json') }}?run_id={{ run.id }}" class="ts-btn ts-btn-secondary">Export JSON</a>
 <a href="{{ url_for('experiment.pei_results', run_id=run.id) }}" class="ts-btn ts-btn-secondary">PEI Results</a>
@@ -17,6 +22,114 @@
     <p class="ts-page-subtitle">Study: {{ run.study_name }} &mdash; {{ run.timestamp }}</p>
   </div>
 </div>
+
+{% set run_status = run.status or 'completed' %}
+{% set is_active = run_status in ('queued', 'running') %}
+{% set has_errors = run_status in ('partial', 'failed') %}
+
+{# ── Queue Progress Panel ─────────────────────────────────────── #}
+{% if progress and progress.total > 0 %}
+<div class="ts-card" style="margin-bottom:1.25rem;" id="ts-progress-card">
+  <div class="ts-card-header" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <span class="ts-card-title">Run Progress</span>
+    <span id="ts-run-badge">
+      {% if run_status == 'completed' %}
+        <span class="ts-badge ts-badge-approved">completed</span>
+      {% elif run_status == 'running' %}
+        <span class="ts-badge ts-badge-info">running</span>
+      {% elif run_status == 'queued' %}
+        <span class="ts-badge ts-badge-pending">queued</span>
+      {% elif run_status == 'partial' %}
+        <span class="ts-badge" style="background:var(--ts-warning,#f59e0b);color:#000;">partial</span>
+      {% elif run_status == 'failed' %}
+        <span class="ts-badge ts-badge-rejected">failed</span>
+      {% endif %}
+    </span>
+    <span id="ts-progress-text" style="font-size:.82rem; color:var(--ts-text-muted);">
+      {{ progress.done }}/{{ progress.total }} completati
+      {% if progress.error > 0 %} — <span style="color:var(--ts-danger,#ef4444);">{{ progress.error }} errori</span>{% endif %}
+    </span>
+    {% if is_active %}
+    <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:auto;">aggiornamento live ogni 3s</span>
+    {% endif %}
+  </div>
+
+  {# Barra di avanzamento #}
+  <div style="padding:.25rem 1.25rem .75rem;">
+    <div style="background:var(--ts-border); border-radius:4px; height:8px; overflow:hidden;">
+      <div id="ts-progress-bar"
+           style="height:100%; border-radius:4px; transition:width .4s;
+                  width:{{ progress.pct }}%;
+                  background:{% if has_errors %}var(--ts-warning,#f59e0b){% elif run_status=='completed' %}var(--ts-success,#22c55e){% else %}var(--ts-accent,#6366f1){% endif %};">
+      </div>
+    </div>
+  </div>
+
+  {# Tabella riassuntiva per tipo di operazione #}
+  {% if queue_items %}
+  <div class="ts-table-wrap" style="max-height:220px; overflow-y:auto;">
+    <table class="ts-table" style="font-size:.78rem;">
+      <thead>
+        <tr><th>Operazione</th><th>Chiave</th><th>Modello</th><th>Lingua</th><th>Stato</th><th>Errore</th></tr>
+      </thead>
+      <tbody id="ts-queue-tbody">
+        {% for it in queue_items %}
+        <tr data-item-id="{{ it.id }}">
+          <td style="font-family:var(--ts-mono);">{{ it.operation_type }}</td>
+          <td style="font-family:var(--ts-mono); color:var(--ts-text-muted); font-size:.72rem;">{{ it.item_key }}</td>
+          <td>{{ (it.payload or {}).get('model_name') or '—' }}</td>
+          <td>{{ (it.payload or {}).get('language_name') or '—' }}</td>
+          <td>
+            {% if it.status == 'done' %}<span class="ts-badge ts-badge-approved">done</span>
+            {% elif it.status == 'running' %}<span class="ts-badge ts-badge-info">running</span>
+            {% elif it.status == 'pending' %}<span class="ts-badge ts-badge-pending">pending</span>
+            {% elif it.status == 'error' %}<span class="ts-badge ts-badge-rejected">error</span>
+            {% elif it.status == 'timeout' %}<span class="ts-badge ts-badge-rejected">timeout</span>
+            {% endif %}
+          </td>
+          <td style="color:var(--ts-danger,#ef4444); font-size:.72rem; max-width:200px; overflow:hidden; text-overflow:ellipsis;" title="{{ it.error_message or '' }}">
+            {{ it.error_message[:80] if it.error_message else '—' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {# Azioni resume / retry #}
+  {% if has_errors %}
+  <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; border-top:1px solid var(--ts-border);">
+    <form method="post" action="{{ url_for('run.resume_run', run_id=run.id) }}">
+      <button class="ts-btn ts-btn-primary ts-btn-sm">Riprendi tutto</button>
+    </form>
+    <details style="flex:1; min-width:200px;">
+      <summary class="ts-btn ts-btn-secondary ts-btn-sm" style="cursor:pointer; list-style:none; display:inline-flex; align-items:center;">
+        Retry per modello
+      </summary>
+      <form method="post" action="{{ url_for('run.retry_models', run_id=run.id) }}"
+            style="margin-top:.5rem; padding:.75rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:6px; display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+        {% set error_models = namespace(found=[]) %}
+        {% for it in queue_items %}
+          {% if it.status in ('error','timeout') and (it.payload or {}).get('model_id') %}
+            {% set mid = (it.payload or {}).get('model_id')|string %}
+            {% set mname = (it.payload or {}).get('model_name','') %}
+            {% if mid not in error_models.found %}
+              {% set _ = error_models.found.append(mid) %}
+              <label style="display:flex; align-items:center; gap:.3rem; font-size:.82rem; cursor:pointer;">
+                <input type="checkbox" name="model_ids" value="{{ mid }}" checked>
+                {{ mname or mid }}
+              </label>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;">Retry selezionati</button>
+      </form>
+    </details>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="ts-grid ts-grid-4" style="margin-bottom:1.75rem;">
   <div class="ts-stat-card">
@@ -141,6 +254,99 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script>
+(function () {
+  const RUN_ID   = {{ run.id }};
+  const IS_ACTIVE = {{ 'true' if is_active else 'false' }};
+  const STATUS_URL = `/experiments/${RUN_ID}/queue-status`;
+
+  if (!IS_ACTIVE) return;
+
+  const BADGE_CLASSES = {
+    completed: 'ts-badge-approved',
+    running:   'ts-badge-info',
+    queued:    'ts-badge-pending',
+    partial:   '',
+    failed:    'ts-badge-rejected',
+  };
+  const BADGE_LABELS = {
+    completed: 'completed', running: 'running', queued: 'queued',
+    partial: 'partial', failed: 'failed',
+  };
+  const ITEM_BADGE = {
+    done:    '<span class="ts-badge ts-badge-approved">done</span>',
+    running: '<span class="ts-badge ts-badge-info">running</span>',
+    pending: '<span class="ts-badge ts-badge-pending">pending</span>',
+    error:   '<span class="ts-badge ts-badge-rejected">error</span>',
+    timeout: '<span class="ts-badge ts-badge-rejected">timeout</span>',
+  };
+
+  let pollInterval = null;
+
+  function stopPolling() {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  }
+
+  async function poll() {
+    try {
+      const res  = await fetch(STATUS_URL);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // Aggiorna badge run status
+      const badge  = document.getElementById('ts-run-badge');
+      const runSt  = data.run_status || 'unknown';
+      if (badge) {
+        const cls  = BADGE_CLASSES[runSt] || 'ts-badge-pending';
+        const lbl  = BADGE_LABELS[runSt] || runSt;
+        const extra = runSt === 'partial' ? ' style="background:var(--ts-warning,#f59e0b);color:#000;"' : '';
+        badge.innerHTML = `<span class="ts-badge ${cls}"${extra}>${lbl}</span>`;
+      }
+
+      // Aggiorna testo avanzamento
+      const p  = data.progress || {};
+      const txt = document.getElementById('ts-progress-text');
+      if (txt) {
+        const errTxt = p.error > 0 ? ` — <span style="color:var(--ts-danger,#ef4444);">${p.error} errori</span>` : '';
+        txt.innerHTML = `${p.done}/${p.total} completati${errTxt}`;
+      }
+
+      // Aggiorna barra
+      const bar = document.getElementById('ts-progress-bar');
+      if (bar) {
+        bar.style.width = (p.pct || 0) + '%';
+        if (runSt === 'completed') bar.style.background = 'var(--ts-success,#22c55e)';
+        else if (['partial','failed'].includes(runSt)) bar.style.background = 'var(--ts-warning,#f59e0b)';
+      }
+
+      // Aggiorna righe tabella
+      const tbody = document.getElementById('ts-queue-tbody');
+      if (tbody && data.items) {
+        data.items.forEach(item => {
+          const row = tbody.querySelector(`tr[data-item-id="${item.id}"]`);
+          if (!row) return;
+          const cells = row.querySelectorAll('td');
+          if (cells[4]) cells[4].innerHTML = ITEM_BADGE[item.status] || item.status;
+          if (cells[5]) {
+            const msg = item.error_message || '—';
+            cells[5].textContent = msg.length > 80 ? msg.slice(0, 80) : msg;
+            cells[5].title = item.error_message || '';
+          }
+        });
+      }
+
+      // Se la run è terminata, smetti di fare polling e ricarica la pagina
+      if (!['queued','running'].includes(runSt)) {
+        stopPolling();
+        // Piccolo delay per dare al DB il tempo di commitare gli ultimi risultati
+        setTimeout(() => { window.location.reload(); }, 800);
+      }
+    } catch (_) { /* ignora errori di rete */ }
+  }
+
+  pollInterval = setInterval(poll, 3000);
+})();
+</script>
 <script>
   function showResponseModal(id) {
     const template = document.getElementById(`response-${id}`);

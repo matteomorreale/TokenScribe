@@ -41,6 +41,13 @@
         Reports
       </a>
 
+      <a href="{{ url_for('log.log_list') }}" class="ts-nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 12h6M9 16h6M9 8h6M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/>
+        </svg>
+        Logs
+      </a>
+
       <div class="ts-nav-section" style="margin-top:1rem;">Configuration</div>
       <a href="{{ url_for('settings.settings_dashboard') }}" class="ts-nav-item">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
