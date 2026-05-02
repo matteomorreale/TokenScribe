@@ -96,7 +96,7 @@ class LLMService:
             return err
 
         t0 = time.monotonic()
-        if provider == self.PROVIDER_DEEPSEEK:
+        if provider in (self.PROVIDER_DEEPSEEK, self.PROVIDER_OPENAI):
             result = handler(model_name, prompt_text, is_reasoning=is_reasoning)
         else:
             result = handler(model_name, prompt_text)
@@ -104,8 +104,8 @@ class LLMService:
 
         if result.success:
             result.cost = (
-                result.input_tokens * cost_per_input
-                + result.output_tokens * cost_per_output
+                result.input_tokens * cost_per_input / 1_000_000
+                + result.output_tokens * cost_per_output / 1_000_000
             )
             self._emit_success(provider, model_name, prompt_text, result, duration_ms, _ctx)
         else:
@@ -168,23 +168,42 @@ class LLMService:
     # OpenAI
     # ------------------------------------------------------------------
 
-    def _call_openai(self, model_name: str, prompt_text: str) -> TokenScribeCallResult:
+    def _call_openai(self, model_name: str, prompt_text: str, is_reasoning: bool = False) -> TokenScribeCallResult:
         api_key = self.settings.get("openai_api_key", "")
         if not api_key:
             return TokenScribeCallResult(success=False, error="OpenAI API key not configured")
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
+
+            # Reasoning models consume an internal reasoning budget before producing
+            # visible output. Start with a larger cap so content has room to breathe.
+            max_tok = 4096 if is_reasoning else 512
+
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
-                max_completion_tokens=512,
+                max_completion_tokens=max_tok,
             )
             usage = response.usage
+            content = response.choices[0].message.content or "" if response.choices else ""
+
+            # If the budget was exhausted and content is empty, the model consumed all tokens
+            # on internal reasoning. Retry once with a larger cap (guards both the non-flagged
+            # case and the rare case where even 4096 reasoning tokens aren't enough).
+            if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt_text}],
+                    max_completion_tokens=8192,
+                )
+                usage = response.usage
+                content = response.choices[0].message.content or "" if response.choices else ""
+
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
-                response_text=response.choices[0].message.content or "",
+                response_text=content,
                 source="api_reported",
             )
         except Exception as e:
@@ -226,6 +245,15 @@ class LLMService:
         if not api_key:
             return TokenScribeCallResult(success=False, error="Google API key not configured")
         try:
+            # Preflight: grpcio-status must match grpcio or api_core raises NameError
+            try:
+                from grpc_status import rpc_status as _rpc_status  # noqa: F401
+            except Exception as grpc_err:
+                return TokenScribeCallResult(
+                    success=False,
+                    error=f"Melchior preflight failed — grpcio-status incompatible: {grpc_err}. "
+                          "Run: pip install --upgrade grpcio-status",
+                )
             import google.generativeai as genai
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(model_name)

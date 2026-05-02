@@ -342,12 +342,16 @@ def detail_experiment(run_id: int):
     magi_status = get_magi_status(settings, em)
     queue_items = _qm().get_run_queue(run_id)
     progress    = _qm().get_run_progress(run_id)
+    all_models  = em.get_all_models()
+    run_history = em.get_run_history(run_id)
     return render_template(
         "experiments/detail.html",
         run=run, results=results, pei_results=pei_results, pei_group_results=pei_group_results,
         magi_status=magi_status,
         queue_items=queue_items,
         progress=progress,
+        all_models=all_models,
+        run_history=run_history,
     )
 
 

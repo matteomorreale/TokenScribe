@@ -5,10 +5,32 @@ Author: Matteo Morreale
 
 from .database import DatabaseManager
 
+# Keys whose values are encrypted at rest.
+_ENCRYPTED_KEYS = frozenset({
+    "openai_api_key",
+    "anthropic_api_key",
+    "google_api_key",
+    "deepseek_api_key",
+    "meta_api_key",
+    "qwen_api_key",
+    "mistral_api_key",
+})
+
 
 class SettingsModel:
-    def __init__(self, db: DatabaseManager):
+    def __init__(self, db: DatabaseManager, crypto=None):
         self.db = db
+        self._crypto = crypto
+
+    def _enc(self, key: str, value: str) -> str:
+        if self._crypto and key in _ENCRYPTED_KEYS and value:
+            return self._crypto.encrypt(value)
+        return value
+
+    def _dec(self, key: str, value: str) -> str:
+        if self._crypto and key in _ENCRYPTED_KEYS and value:
+            return self._crypto.decrypt(value)
+        return value
 
     def get(self, key: str, default=None):
         conn = self.db.get_connection()
@@ -16,7 +38,9 @@ class SettingsModel:
             row = conn.execute(
                 "SELECT value FROM settings WHERE key=?", (key,)
             ).fetchone()
-            return row["value"] if row else default
+            if row is None:
+                return default
+            return self._dec(key, row["value"])
         finally:
             conn.close()
 
@@ -29,7 +53,7 @@ class SettingsModel:
                    ON CONFLICT(key) DO UPDATE SET
                      value=excluded.value,
                      updated_at=strftime('%Y-%m-%dT%H:%M:%S','now')""",
-                (key, value),
+                (key, self._enc(key, value)),
             )
             conn.commit()
         finally:
@@ -45,7 +69,7 @@ class SettingsModel:
                        ON CONFLICT(key) DO UPDATE SET
                          value=excluded.value,
                          updated_at=strftime('%Y-%m-%dT%H:%M:%S','now')""",
-                    (key, value),
+                    (key, self._enc(key, value)),
                 )
             conn.commit()
         finally:
@@ -55,7 +79,7 @@ class SettingsModel:
         conn = self.db.get_connection()
         try:
             rows = conn.execute("SELECT key, value FROM settings").fetchall()
-            return {r["key"]: r["value"] for r in rows}
+            return {r["key"]: self._dec(r["key"], r["value"]) for r in rows}
         finally:
             conn.close()
 
@@ -86,6 +110,7 @@ class SettingsModel:
         cost_per_input: float,
         cost_per_output: float,
         is_active: int,
+        is_reasoning: int = 0,
     ):
         conn = self.db.get_connection()
         try:
@@ -93,9 +118,10 @@ class SettingsModel:
                 """UPDATE models SET
                      cost_per_input_token=?,
                      cost_per_output_token=?,
-                     is_active=?
+                     is_active=?,
+                     is_reasoning=?
                    WHERE id=?""",
-                (cost_per_input, cost_per_output, is_active, model_id),
+                (cost_per_input, cost_per_output, is_active, is_reasoning, model_id),
             )
             conn.commit()
         finally:

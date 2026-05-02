@@ -43,6 +43,7 @@ class DatabaseManager:
             self._seed_writing_systems(conn)
             self._seed_languages(conn)
             self._seed_providers(conn)
+            self._backfill_model_costs(conn)
             conn.commit()
         finally:
             conn.close()
@@ -164,6 +165,40 @@ class DatabaseManager:
                 )
                 # Runs that already exist without a queue are completed by definition
                 conn.execute("UPDATE experiment_runs SET status = 'completed'")
+        except sqlite3.Error:
+            pass
+
+        # Migrate pricing from $/token to $/million tokens (one-shot, guarded by settings key)
+        try:
+            if not conn.execute("SELECT id FROM settings WHERE key='pricing_unit'").fetchone():
+                conn.execute(
+                    """UPDATE models
+                       SET cost_per_input_token  = cost_per_input_token  * 1000000,
+                           cost_per_output_token = cost_per_output_token * 1000000
+                       WHERE cost_per_input_token > 0 OR cost_per_output_token > 0"""
+                )
+                conn.execute("INSERT INTO settings (key, value) VALUES ('pricing_unit', 'per_million')")
+        except sqlite3.Error:
+            pass
+
+        # run_history table (added in redo/replace feature)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS run_history (
+                    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id                 INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                    model_id               INTEGER NOT NULL,
+                    model_name             TEXT NOT NULL,
+                    archived_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                    reason                 TEXT NOT NULL,
+                    replaced_by_model_id   INTEGER,
+                    replaced_by_model_name TEXT,
+                    results_json           TEXT NOT NULL DEFAULT '[]'
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_run_history_run_id ON run_history(run_id)"
+            )
         except sqlite3.Error:
             pass
 
@@ -355,6 +390,20 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
 
+            CREATE TABLE IF NOT EXISTS run_history (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id                 INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                model_id               INTEGER NOT NULL,
+                model_name             TEXT NOT NULL,
+                archived_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                reason                 TEXT NOT NULL,
+                replaced_by_model_id   INTEGER,
+                replaced_by_model_name TEXT,
+                results_json           TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_run_history_run_id ON run_history(run_id);
+
             CREATE TABLE IF NOT EXISTS operation_logs (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 operation_type  TEXT NOT NULL,
@@ -479,10 +528,31 @@ class DatabaseManager:
                 for m in models:
                     conn.execute(
                         """INSERT OR IGNORE INTO models
-                           (provider_id, name, context_window, is_reasoning)
-                           VALUES (?, ?, ?, ?)""",
+                           (provider_id, name, context_window, is_reasoning,
+                            cost_per_input_token, cost_per_output_token)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
                         (provider_row["id"], m["name"], m.get("context_window", 0),
-                         1 if m.get("is_reasoning", False) else 0),
+                         1 if m.get("is_reasoning", False) else 0,
+                         m.get("cost_per_input_token", 0.0) or 0.0,
+                         m.get("cost_per_output_token", 0.0) or 0.0),
+                    )
+
+    def _backfill_model_costs(self, conn: sqlite3.Connection):
+        """Apply default pricing to existing models that still have cost = 0.
+        Runs at every bootstrap; skips models where the user already set a non-zero price."""
+        from config import TokenScribeConfig
+        for models in TokenScribeConfig.DEFAULT_MODELS.values():
+            for m in models:
+                cpi = m.get("cost_per_input_token", 0.0) or 0.0
+                cpo = m.get("cost_per_output_token", 0.0) or 0.0
+                if cpi > 0 or cpo > 0:
+                    conn.execute(
+                        """UPDATE models
+                           SET cost_per_input_token = ?, cost_per_output_token = ?
+                           WHERE name = ?
+                             AND cost_per_input_token = 0.0
+                             AND cost_per_output_token = 0.0""",
+                        (cpi, cpo, m["name"]),
                     )
 
     # ------------------------------------------------------------------

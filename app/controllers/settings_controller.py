@@ -38,7 +38,7 @@ MAGI_JUDGE_KEYS = [
 
 
 def _stm() -> SettingsModel:
-    return SettingsModel(current_app.config["DB"])
+    return SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO"))
 
 
 def _study_model() -> StudyModel:
@@ -104,9 +104,24 @@ def update_models():
     cost_in = request.form.get("cost_per_input_token", type=float, default=0.0)
     cost_out = request.form.get("cost_per_output_token", type=float, default=0.0)
     is_active = 1 if request.form.get("is_active") else 0
+    is_reasoning = 1 if request.form.get("is_reasoning") else 0
     if model_id:
-        stm.update_model_costs(model_id, cost_in, cost_out, is_active)
+        stm.update_model_costs(model_id, cost_in, cost_out, is_active, is_reasoning)
         flash("Model configuration updated.", "success")
+    return redirect(url_for("settings.settings_dashboard"))
+
+
+@settings_bp.route("/models/bulk", methods=["POST"])
+def update_models_bulk():
+    stm = _stm()
+    model_ids = request.form.getlist("model_ids", type=int)
+    for mid in model_ids:
+        cost_in = request.form.get(f"cost_in_{mid}", type=float, default=0.0)
+        cost_out = request.form.get(f"cost_out_{mid}", type=float, default=0.0)
+        is_active = 1 if request.form.get(f"is_active_{mid}") else 0
+        is_reasoning = 1 if request.form.get(f"is_reasoning_{mid}") else 0
+        stm.update_model_costs(mid, cost_in, cost_out, is_active, is_reasoning)
+    flash(f"{len(model_ids)} model(s) updated.", "success")
     return redirect(url_for("settings.settings_dashboard"))
 
 

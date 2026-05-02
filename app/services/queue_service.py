@@ -51,9 +51,10 @@ class QueueService:
         qs.start()
     """
 
-    def __init__(self, db: DatabaseManager, log_service=None):
+    def __init__(self, db: DatabaseManager, log_service=None, crypto_service=None):
         self._db = db
         self._log = log_service
+        self._crypto = crypto_service
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._worker_loop,
@@ -159,7 +160,7 @@ class QueueService:
         candidate_id = int(payload["candidate_id"])
         prompt_id    = int(payload["prompt_id"])
 
-        settings  = SettingsModel(self._db).get_all()
+        settings  = SettingsModel(self._db, crypto=self._crypto).get_all()
         em        = ExperimentModel(self._db)
         ssm       = SelectionScoreModel(self._db)
 
@@ -242,9 +243,20 @@ class QueueService:
         language_id = int(payload["language_id"])
         model_id    = int(payload["model_id"])
 
-        settings = SettingsModel(self._db).get_all()
+        settings = SettingsModel(self._db, crypto=self._crypto).get_all()
         llm      = LLMService(settings, log_service=self._log)
         em       = ExperimentModel(self._db)
+
+        # Re-read is_reasoning from DB at execution time: the payload may have been
+        # serialised before the user toggled the flag in settings.
+        _conn = self._db.get_connection()
+        try:
+            _row = _conn.execute(
+                "SELECT is_reasoning FROM models WHERE id=?", (model_id,)
+            ).fetchone()
+            is_reasoning = bool(_row["is_reasoning"]) if _row else bool(payload.get("is_reasoning", False))
+        finally:
+            _conn.close()
 
         llm_ctx = {
             "operation_type": "experiment",
@@ -260,7 +272,7 @@ class QueueService:
             prompt_text=payload["text"],
             cost_per_input=float(payload.get("cost_per_input") or 0.0),
             cost_per_output=float(payload.get("cost_per_output") or 0.0),
-            is_reasoning=bool(payload.get("is_reasoning", False)),
+            is_reasoning=is_reasoning,
             _ctx=llm_ctx,
         )
         if not result.success and result.model_not_found:
@@ -289,6 +301,9 @@ class QueueService:
         )["token_count"]
         is_valid = bool((result.response_text or "").strip()) and visible_output_tokens > 0
 
+        # Rimuove eventuali record invalidi precedenti (es. da un retry) prima di inserire
+        em.delete_invalid_token_result(run_id, prompt_id, language_id, model_id)
+
         em.insert_token_result(
             run_id=run_id,
             prompt_id=prompt_id,
@@ -302,6 +317,31 @@ class QueueService:
             visible_output_tokens=visible_output_tokens,
             response_valid=is_valid,
         )
+
+        if not is_valid:
+            raw_len = len(result.response_text or "")
+            msg = (
+                f"Empty visible output — model={payload['model_name']} "
+                f"provider={payload.get('provider', '?')} "
+                f"prompt={prompt_id} lang={payload.get('language_name', '?')} "
+                f"[raw_len={raw_len} input_tok={result.input_tokens} output_tok={result.output_tokens}]"
+            )
+            logger.error("Queue: LLM empty response: %s", msg)
+            if self._log:
+                self._log.error(
+                    "queue", "empty_response",
+                    message=msg,
+                    context_ref={
+                        "run_id": run_id,
+                        "prompt_id": prompt_id,
+                        "language_id": language_id,
+                        "model_id": model_id,
+                        "model_name": payload["model_name"],
+                        "provider": payload.get("provider"),
+                        "language_name": payload.get("language_name"),
+                    },
+                )
+            raise RuntimeError(msg)
 
     def _exec_compute_pei(self, payload: dict) -> None:
         run_id    = int(payload["run_id"])

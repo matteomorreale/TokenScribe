@@ -97,11 +97,28 @@
   </div>
   {% endif %}
 
+  {# Azioni revalidazione (per run completed con risposte vuote non ancora rilevate) #}
+  {% set invalid_count = results | selectattr('response_valid', 'equalto', 0) | list | length %}
+  {% if run_status == 'completed' and invalid_count > 0 %}
+  <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; align-items:center; border-top:1px solid var(--ts-border); background:rgba(245,158,11,.08);">
+    <span style="font-size:.85rem; color:var(--ts-warning,#f59e0b);">
+      ⚠ {{ invalid_count }} risposta/e vuota/e rilevata/e — status potrebbe essere errato.
+    </span>
+    <form method="post" action="{{ url_for('run.revalidate_status', run_id=run.id) }}" style="margin-left:auto;">
+      <button class="ts-btn ts-btn-sm" style="border-color:var(--ts-warning,#f59e0b); color:var(--ts-warning,#f59e0b);">
+        Revalida status
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
   {# Azioni resume / retry #}
   {% if has_errors %}
   <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; border-top:1px solid var(--ts-border);">
-    <form method="post" action="{{ url_for('run.resume_run', run_id=run.id) }}">
-      <button class="ts-btn ts-btn-primary ts-btn-sm">Riprendi tutto</button>
+    <form method="post" action="{{ url_for('run.retry_errors', run_id=run.id) }}">
+      <button class="ts-btn ts-btn-primary ts-btn-sm">
+        Retry errori{% if progress.error > 0 %} ({{ progress.error }}){% endif %}
+      </button>
     </form>
     <details style="flex:1; min-width:200px;">
       <summary class="ts-btn ts-btn-secondary ts-btn-sm" style="cursor:pointer; list-style:none; display:inline-flex; align-items:center;">
@@ -126,8 +143,76 @@
         <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;">Retry selezionati</button>
       </form>
     </details>
+    <form method="post" action="{{ url_for('run.resume_run', run_id=run.id) }}">
+      <button class="ts-btn ts-btn-secondary ts-btn-sm">Riprendi run</button>
+    </form>
   </div>
   {% endif %}
+</div>
+{% endif %}
+
+{# ── Gestione Modelli (redo / replace) ──────────────────────────── #}
+{% if run_status in ('completed', 'partial') and results %}
+{% set run_models = namespace(seen=[], list=[]) %}
+{% for r in results %}
+  {% if r.model_id|string not in run_models.seen %}
+    {% set _ = run_models.seen.append(r.model_id|string) %}
+    {% set _ = run_models.list.append({'model_id': r.model_id, 'model_name': r.model_name, 'provider_name': r.provider_name}) %}
+  {% endif %}
+{% endfor %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
+    <span class="ts-card-title">Gestione Modelli</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">Rifai o sostituisci le chiamate per singolo AI</span>
+  </div>
+  <div style="padding:.5rem 1.25rem .875rem; display:flex; flex-direction:column; gap:.5rem;">
+    {% for m in run_models.list %}
+    {% set model_results = results | selectattr('model_id', 'equalto', m.model_id) | list %}
+    <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; padding:.5rem .75rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:6px;">
+      <span style="font-family:var(--ts-mono); font-size:.83rem; font-weight:600;">{{ m.model_name }}</span>
+      <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ m.provider_name }}</span>
+      <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ model_results|length }} risultati</span>
+      <div style="margin-left:auto; display:flex; gap:.4rem;">
+        <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
+                onclick="openRedoModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
+          Rifai
+        </button>
+        <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
+                onclick="openReplaceModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
+          Sostituisci
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Storico Archivi ─────────────────────────────────────────────── #}
+{% if run_history %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header"><span class="ts-card-title">Storico Archivi</span></div>
+  <div class="ts-table-wrap">
+    <table class="ts-table" style="font-size:.78rem;">
+      <thead>
+        <tr><th>Data</th><th>Modello</th><th>Operazione</th><th>Sostituito con</th></tr>
+      </thead>
+      <tbody>
+        {% for h in run_history %}
+        <tr>
+          <td style="color:var(--ts-text-muted);">{{ h.archived_at }}</td>
+          <td style="font-family:var(--ts-mono);">{{ h.model_name }}</td>
+          <td>
+            {% if h.reason == 'redo' %}<span class="ts-badge ts-badge-info">redo</span>
+            {% elif h.reason == 'replace' %}<span class="ts-badge ts-badge-pending">replace</span>
+            {% else %}<span class="ts-badge">{{ h.reason }}</span>{% endif %}
+          </td>
+          <td style="font-family:var(--ts-mono);">{{ h.replaced_by_model_name or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endif %}
 
@@ -197,7 +282,7 @@
           <td style="font-family:var(--ts-mono); font-size:.78rem;">{{ r.model_name }}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ r.input_tokens }}</td>
           <td style="font-variant-numeric:tabular-nums;">
-            {% if not r.response_valid %}<span title="Empty response — excluded from averages" style="color:var(--ts-warning,#e6a817);">⚠</span> {% endif %}
+            {% if not r.response_valid %}<span title="Risposta vuota — il modello non ha prodotto output visibile. Consulta i log della run per il dettaglio (raw_len, input/output tokens)." style="color:var(--ts-danger,#ef4444); font-weight:600;">✗</span> {% endif %}
             {{ r.visible_output_tokens if r.visible_output_tokens is not none else '—' }}
           </td>
           <td style="font-variant-numeric:tabular-nums; color:{% if r.reasoning_tokens and r.reasoning_tokens > 0 %}var(--ts-warning, #f59e0b){% else %}var(--ts-text-muted){% endif %};">{{ r.reasoning_tokens if r.reasoning_tokens is not none else '—' }}</td>
@@ -225,14 +310,85 @@
         </tr>
         {% endfor %}
       </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--ts-border); font-weight:600;">
+          <td colspan="9" style="text-align:right; font-size:.78rem; color:var(--ts-text-muted); padding-right:.75rem;">Totale</td>
+          <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(results|sum(attribute='cost_visible_only')) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">${{ "%.6f"|format(results|sum(attribute='cost')) }}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
     </table>
   </div>
   <p style="font-size:.75rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
     <strong>Methodological note:</strong> <em>Visible Out</em> uses tiktoken (cl100k_base). For non-OpenAI models the internal tokenizer may differ slightly, producing small non-zero <em>Reasoning</em> values even on non-reasoning models. A model is flagged as reasoning only when <code>reasoning_tokens &gt; 10</code> (noise threshold) to avoid false positives from tokenizer drift.
   </p>
+  {% if results|sum(attribute='input_tokens') > 0 and results|sum(attribute='cost') == 0 %}
+  <p style="font-size:.8rem; color:var(--ts-warning,#f59e0b); padding:.4rem 1rem .75rem; border-top:1px solid var(--ts-border); margin:0;">
+    ⚠ I costi mostrano $0 — il pricing di questi modelli non è configurato.
+    Vai in <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning,#f59e0b);">Impostazioni → Modelli</a> per impostarlo.
+  </p>
+  {% endif %}
   {% else %}
   <div class="ts-empty" style="padding:2rem;"><div class="ts-empty-title">No results recorded</div></div>
   {% endif %}
+</div>
+
+<!-- Modal: Rifai Modello -->
+<div id="modal-redo" class="ts-modal">
+  <div class="ts-modal-content" style="max-width:480px; width:90%;">
+    <div class="ts-modal-header">
+      <h2 class="ts-modal-title" id="redo-modal-title">Rifai chiamate</h2>
+      <button class="ts-modal-close" onclick="closeModal('modal-redo')">&times;</button>
+    </div>
+    <form method="post" action="{{ url_for('run.redo_model', run_id=run.id) }}">
+      <div class="ts-modal-body">
+        <p style="font-size:.87rem; margin-bottom:1rem;" id="redo-modal-desc"></p>
+        <label style="display:flex; align-items:center; gap:.5rem; font-size:.85rem; cursor:pointer;">
+          <input type="checkbox" name="save_history" value="1" id="redo-save-history">
+          Salva i risultati attuali come storico (JSON nel DB)
+        </label>
+        <input type="hidden" name="model_id" id="redo-model-id">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:.5rem; padding:0 1.25rem 1.25rem;">
+        <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="closeModal('modal-redo')">Annulla</button>
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Procedi</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Sostituisci Modello -->
+<div id="modal-replace" class="ts-modal">
+  <div class="ts-modal-content" style="max-width:520px; width:90%;">
+    <div class="ts-modal-header">
+      <h2 class="ts-modal-title" id="replace-modal-title">Sostituisci modello</h2>
+      <button class="ts-modal-close" onclick="closeModal('modal-replace')">&times;</button>
+    </div>
+    <form method="post" action="{{ url_for('run.replace_model', run_id=run.id) }}">
+      <div class="ts-modal-body">
+        <p style="font-size:.87rem; margin-bottom:.75rem;" id="replace-modal-desc"></p>
+        <div style="margin-bottom:.875rem;">
+          <label style="display:block; font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.35rem;">Sostituisci con</label>
+          <select name="new_model_id" id="replace-new-model"
+                  style="width:100%; padding:.4rem .6rem; background:var(--ts-bg); border:1px solid var(--ts-border); border-radius:4px; color:var(--ts-text); font-size:.85rem;">
+            {% for m in all_models %}
+            <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <label style="display:flex; align-items:center; gap:.5rem; font-size:.85rem; cursor:pointer;">
+          <input type="checkbox" name="save_history" value="1" id="replace-save-history">
+          Salva i risultati attuali come storico (JSON nel DB)
+        </label>
+        <input type="hidden" name="old_model_id" id="replace-old-model-id">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:.5rem; padding:0 1.25rem 1.25rem;">
+        <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="closeModal('modal-replace')">Annulla</button>
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Procedi</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <!-- Modal for AI Response -->
@@ -387,6 +543,45 @@
     if (e.target === modal) {
       closeResponseModal();
     }
+    ['modal-redo', 'modal-replace'].forEach(id => {
+      const m = document.getElementById(id);
+      if (m && e.target === m) closeModal(id);
+    });
   });
+</script>
+<script>
+function openRedoModal(modelId, modelName) {
+  document.getElementById('redo-model-id').value = modelId;
+  document.getElementById('redo-modal-title').textContent = 'Rifai chiamate — ' + modelName;
+  document.getElementById('redo-modal-desc').textContent =
+    'Tutte le chiamate per ' + modelName + ' verranno rifatte da zero. ' +
+    'I risultati attuali verranno eliminati. Vuoi salvarne una copia come storico?';
+  document.getElementById('redo-save-history').checked = false;
+  document.getElementById('modal-redo').classList.add('active');
+}
+
+function openReplaceModal(modelId, modelName) {
+  document.getElementById('replace-old-model-id').value = modelId;
+  document.getElementById('replace-modal-title').textContent = 'Sostituisci — ' + modelName;
+  document.getElementById('replace-modal-desc').textContent =
+    'Tutte le chiamate di ' + modelName + ' verranno rimpiazzate con il modello selezionato. ' +
+    'I risultati attuali verranno eliminati. Vuoi salvarne una copia come storico?';
+  document.getElementById('replace-save-history').checked = false;
+
+  const sel = document.getElementById('replace-new-model');
+  let firstValid = null;
+  for (const opt of sel.options) {
+    opt.disabled = (opt.value == modelId);
+    if (!opt.disabled && !firstValid) firstValid = opt.value;
+  }
+  if (!sel.value || sel.value == modelId) sel.value = firstValid || '';
+
+  document.getElementById('modal-replace').classList.add('active');
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('active');
+}
 </script>
 {% endblock %}

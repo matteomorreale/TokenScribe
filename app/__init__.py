@@ -4,12 +4,14 @@ Author: Matteo Morreale
 """
 
 import os
+from pathlib import Path
 from flask import Flask
-from config import config_map, TokenScribeConfig
+from config import config_map, TokenScribeConfig, BASE_DIR
 from app.models.database import DatabaseManager
 from app.models.queue_model import QueueModel
 from app.services.log_service import LogService
 from app.services.queue_service import QueueService
+from app.services.crypto_service import CryptoService
 
 
 def create_app(env: str = "default") -> Flask:
@@ -33,13 +35,17 @@ def create_app(env: str = "default") -> Flask:
     db.bootstrap()
     app.config["DB"] = db
 
+    # Encryption service for API keys stored in settings
+    crypto_service = CryptoService(env_path=Path(BASE_DIR) / ".env")
+    app.config["CRYPTO"] = crypto_service
+
     # Initialize async log service (daemon thread, non-blocking)
     log_service = LogService(app.config["DATABASE_PATH"])
     app.config["LOG_SERVICE"] = log_service
 
     # Recover stale 'running' items from a previous crash, then start queue worker
     QueueModel(db).recover_stale_running()
-    queue_service = QueueService(db, log_service=log_service)
+    queue_service = QueueService(db, log_service=log_service, crypto_service=crypto_service)
     queue_service.start()
     app.config["QUEUE_SERVICE"] = queue_service
 

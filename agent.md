@@ -28,9 +28,11 @@ Services layer handles business logic; Controllers handle HTTP routing.
 - **PromptController** — prompt management, template enforcement, readiness status
 - **TranslationController** — candidate management, scoring (SFS + LER), approval, MAGI scores
 - **ExperimentController** — run experiments via LLM APIs, store token results, delete runs
-- **SettingsController** — API keys, model configuration
+- **SettingsController** — API keys, model configuration (including Qwen region)
 - **ReportController** — export dataset, score visualizations, bulk delete runs
-- **LLMService** — unified interface to all providers (7 total)
+- **LLMService** — unified interface to all providers (7 total); `TokenScribeCallResult` carries `model_not_found` flag; cross-provider 404/deprecation detection via `_is_model_not_found()`
+- **QueueService** — daemon thread processing `run_queue` one item at a time; dispatches `llm_call`, `magi_phase2`, `compute_pei`, `finalize_pei_groups`, `snapshot_translations`; automatic tier-aware fallback on `model_not_found`
+- **QueueModel** — CRUD for `run_queue` table; dequeue / mark_done / mark_error / mark_timeout / recompute_run_status
 - **ScoringService** — SFS (DSF+RTF), LER, PEI, MAGI Selection Score computation
 - **MAGIService** — three-judge LLM panel (Balthasar, Caspar, Melchior) with retry logic
 - **ExportService** — CSV and JSON export with full metric enrichment
@@ -89,7 +91,7 @@ The judge prompt asks for a single JSON object with the three dimension keys, st
 - `visible_output_tokens` — tiktoken (cl100k_base) count of the visible response text
 - `api_reported_output_tokens` — tokens as reported by the provider API
 - `reasoning_tokens = max(0, api_reported − visible)` — hidden reasoning overhead
-- `cost_visible_only = visible_output_tokens × cost_per_output_token` — comparable across models
+- `cost_visible_only = visible_output_tokens × cost_per_output_token / 1_000_000` — comparable across models
 - `ror = reasoning_tokens / visible_output_tokens` — Reasoning Overhead Ratio
 - `is_reasoning_capable` — from `models.is_reasoning` (static DB flag set at model seed time)
 - `reasoning_observed = reasoning_tokens > REASONING_THRESHOLD` — dynamic boolean per result; threshold `TokenScribeConfig.REASONING_THRESHOLD = 10` guards against tokenizer-drift false positives
@@ -141,6 +143,48 @@ A `—` for a failed judge is styled with `text-decoration: underline dotted; cu
 to signal it is hoverable. Old records (stored before `raw_response` was added) show
 `"n/a (record predates raw logging)"` in the tooltip.
 
+## LLM Provider Resilience
+
+### model_not_found Fallback
+
+`TokenScribeCallResult` carries a `model_not_found: bool` flag (default `False`).
+`_is_model_not_found(error_str)` in `llm_service.py` detects 404/deprecation errors across all providers:
+
+- Anthropic: `"not_found_error"` in error string
+- OpenAI-compatible (OpenAI, DeepSeek, Meta, Qwen, Mistral): `"error code: 404"` + `"model"`, or `"model_not_found"`, `"no such model"`, `"model does not exist"`
+- Google: `"no longer available"` or error string starting with `"404 "`
+
+All 7 provider `except` blocks call `_is_model_not_found()` and set the flag accordingly.
+
+When `QueueService._exec_llm_call` receives `model_not_found=True`, it calls `_get_fallback_model()`:
+
+- Queries active models for the same provider ordered by `id DESC`
+- **Tier-aware selection**: first looks for a model whose name contains the same tier keyword
+  (`flash`, `sonnet`, `haiku`, `opus`, `turbo`, `pro`, `mini`, `nano`) as the original model
+- Falls back to the most-recently-added active model if no same-tier match exists
+- Updates `model_id` to the fallback's DB id (prevents FK constraint violations when the
+  original model has been removed from the `models` table)
+- Examples: `gemini-2.0-flash` → `gemini-2.5-flash`; `claude-sonnet-4` → `claude-sonnet-4-6`
+
+### Qwen Region Setting
+
+Qwen (DashScope) has two endpoints depending on where the API key was created:
+
+- `"china"` (default): `https://dashscope.aliyuncs.com/compatible-mode/v1` — keys from `aliyun.com`
+- `"international"`: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` — keys from `alibabacloud.com`
+
+The endpoint is selected at call time by reading `settings["qwen_region"]`.
+Configured in the Settings dashboard (API Keys card → Qwen Region dropdown).
+Saved via `POST /settings/api-keys` alongside the API key.
+
+### Invalid / Deprecated Models
+
+Models with no version suffix or deprecated by the provider are removed from `config.py` DEFAULT_MODELS
+and deactivated (`is_active=0`) in the DB to prevent them from appearing in the UI:
+
+- `claude-sonnet-4`, `claude-opus-4` — removed (Anthropic requires full version suffix)
+- `gemini-2.0-flash` — deactivated (deprecated by Google; replaced by `gemini-2.5-flash`)
+
 ## Development Conventions
 
 - Author: Matteo Morreale
@@ -154,6 +198,8 @@ to signal it is hoverable. Old records (stored before `raw_response` was added) 
 - `magi_judges` is stored as JSON TEXT in DB; deserialized to dict in both
   `SelectionScoreModel.get_by_prompt()` and `ExperimentModel.get_translation_scores_by_run()`
   so templates and exports always receive a Python dict, never a raw string
+- `model_not_found` flag on `TokenScribeCallResult` drives automatic fallback in QueueService;
+  never raise directly — let the flag propagate so the queue can substitute a valid model
 
 ## Documentation Map
 

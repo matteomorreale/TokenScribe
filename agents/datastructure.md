@@ -46,7 +46,9 @@ providers
 
 models
   id, provider_id → providers.id, name, context_window,
-  cost_per_input_token, cost_per_output_token, is_active,
+  cost_per_input_token  REAL,   -- USD per million input tokens ($/M)
+  cost_per_output_token REAL,   -- USD per million output tokens ($/M)
+  is_active,
   is_reasoning INTEGER NOT NULL DEFAULT 0  -- 1 = model exposes hidden reasoning tokens
 
 experiment_runs
@@ -68,7 +70,8 @@ token_results                 -- IMMUTABLE: INSERT only, no UPDATE
 
   -- Derived in Python by get_results_by_run() (NOT stored):
   -- reasoning_tokens = max(0, api_reported_output_tokens - visible_output_tokens)
-  -- cost_visible_only = visible_output_tokens × cost_per_output_token
+  -- cost_visible_only = visible_output_tokens × cost_per_output_token / 1_000_000
+  -- cost = (input_tokens × cost_per_input_token + api_reported_output_tokens × cost_per_output_token) / 1_000_000
   -- ror = reasoning_tokens / visible_output_tokens
   -- reasoning_observed = reasoning_tokens > REASONING_THRESHOLD (10)
   -- reasoning_state = "active"               (is_reasoning=1 AND reasoning_observed)
@@ -121,8 +124,26 @@ run_translation_snapshot
   snapshotted_at
   UNIQUE(run_id, prompt_id, language_id)
 
+run_queue                     -- async work items for QueueService daemon thread
+  id, run_id → experiment_runs.id,
+  operation_type TEXT,        -- "llm_call" | "magi_phase2" | "compute_pei" | "finalize_pei_groups" | "snapshot_translations"
+  item_key TEXT,              -- unique key per run: e.g. "llm:p1:l3:m7"
+  payload TEXT (JSON),        -- all data the worker needs (model_name, provider, prompt text, etc.)
+  status TEXT,                -- "pending" | "running" | "done" | "error" | "timeout"
+  priority INT DEFAULT 0,
+  retry_count INT DEFAULT 0,
+  error_message TEXT,
+  created_at, started_at, completed_at
+  UNIQUE(run_id, operation_type, item_key)
+
 settings
   id, key (UNIQUE), value, updated_at
+
+  -- Notable settings keys:
+  -- {provider}_api_key   — API key per provider (openai, anthropic, google, deepseek, meta, qwen, mistral)
+  -- qwen_region          — "china" (dashscope.aliyuncs.com) | "international" (dashscope-intl.aliyuncs.com)
+  -- magi_judge_{name}_id — model_id for Balthasar / Caspar / Melchior
+  -- pricing_unit         — "per_million" (set by one-shot migration; guards against double-multiplying costs)
 ```
 
 ## Relationships

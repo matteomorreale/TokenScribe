@@ -9,6 +9,7 @@ to isolate tokenizer behavior from translation artifacts.
 
 For architecture and modules see:
 
+- agents/agent.md
 - agents/architecture.md
 - agents/datastructure.md
 - agents/api.md

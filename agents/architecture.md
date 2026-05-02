@@ -19,10 +19,12 @@ TokenScribe/
 │   │   ├── prompt_model.py
 │   │   ├── translation_model.py
 │   │   ├── experiment_model.py
+│   │   ├── queue_model.py       # QueueModel — run_queue CRUD (dequeue, mark_done/error/timeout)
 │   │   ├── selection_score_model.py  # MAGI Phase 1 + readiness semaphore
 │   │   └── settings_model.py
 │   ├── services/                # Business logic layer
-│   │   ├── llm_service.py       # Unified LLM provider interface (7 providers)
+│   │   ├── llm_service.py       # Unified LLM provider interface (7 providers); model_not_found fallback
+│   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback
 │   │   ├── scoring_service.py   # SFS (DSF+RTF), LER, PEI, MAGI Phase 1 computation
 │   │   ├── magi_service.py      # MAGI Phase 2: three-judge LLM panel with retry
 │   │   └── export_service.py    # Dataset export (CSV, JSON)
@@ -73,7 +75,9 @@ TokenScribe/
 
 - controllers/experiment_controller.py — create/delete runs; readiness check on GET /new
 - models/experiment_model.py
+- models/queue_model.py
 - services/llm_service.py
+- services/queue_service.py
 
 ### Settings & Configuration
 
@@ -179,11 +183,20 @@ Closed via ×, Escape, or click-outside.
 5. Run experiment → call LLM APIs → snapshot translations → store token results → compute PEI
 6. Export dataset (CSV/JSON) with full enrichment (SFS, LER, PEI, MAGI, token efficiency)
 
+## LLM Resilience
+
+`TokenScribeCallResult.model_not_found` (bool) is set by `_is_model_not_found()` when any provider
+returns a 404 / "no longer available" / "not_found_error" response.
+`QueueService._get_fallback_model(provider, exclude_id, original_name)` selects a same-tier
+replacement (flash→flash, sonnet→sonnet, etc.) from active models, updating `model_id` in the
+`token_results` insert to avoid FK violations against the deleted/deactivated model row.
+
 ## External Dependencies
 
 - sentence-transformers — local multilingual embeddings (paraphrase-multilingual-MiniLM-L12-v2)
 - tiktoken — neutral tokenizer (cl100k_base) for PEI and visible_output_tokens
-- openai, anthropic, google-generativeai, mistralai, dashscope (LLM providers)
+- openai, anthropic, google-generativeai, mistralai (LLM provider SDKs)
+- Qwen uses the `openai` SDK pointed at DashScope endpoints (no separate SDK)
 
 ## Files Agents Should Avoid Reading Unless Necessary
 

@@ -98,6 +98,25 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def delete_invalid_token_result(
+        self,
+        run_id: int,
+        prompt_id: int,
+        language_id: int,
+        model_id: int,
+    ) -> None:
+        """Rimuove record con response_valid=0 per questa combinazione (usato prima di un retry)."""
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """DELETE FROM token_results
+                   WHERE run_id=? AND prompt_id=? AND language_id=? AND model_id=? AND response_valid=0""",
+                (run_id, prompt_id, language_id, model_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def delete_run(self, run_id: int):
         conn = self.db.get_connection()
         try:
@@ -201,6 +220,7 @@ class ExperimentModel:
                           l.morphology_group as morphology_group,
                           ws.name as writing_system,
                           m.name as model_name,
+                          m.cost_per_input_token,
                           m.cost_per_output_token,
                           m.is_reasoning as is_reasoning_capable,
                           pr.name as provider_name
@@ -219,10 +239,12 @@ class ExperimentModel:
                 d = dict(r)
                 vot = d.get("visible_output_tokens") or 0
                 arot = d.get("api_reported_output_tokens") or 0
+                cpi = d.get("cost_per_input_token") or 0.0
                 cpo = d.get("cost_per_output_token") or 0.0
                 d["visible_output_tokens"] = vot
                 d["reasoning_tokens"] = max(0, arot - vot)
-                d["cost_visible_only"] = round(vot * cpo, 8)
+                d["cost_visible_only"] = round(vot * cpo / 1_000_000, 8)
+                d["cost"] = round(((d.get("input_tokens") or 0) * cpi + arot * cpo) / 1_000_000, 8)
                 d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
                 is_capable = bool(d.get("is_reasoning_capable"))
                 reasoning_observed = d["reasoning_tokens"] > _REASONING_THRESHOLD
@@ -515,6 +537,147 @@ class ExperimentModel:
                     "text":             r["text"],
                 })
             return inputs
+        finally:
+            conn.close()
+
+    # --- Run History (archivio per redo/replace) ---
+
+    def archive_model_results(
+        self,
+        run_id: int,
+        model_id: int,
+        model_name: str,
+        reason: str,
+        replaced_by_model_id: int = None,
+        replaced_by_model_name: str = None,
+    ) -> int:
+        """Salva in run_history i token_results correnti per un modello. Ritorna l'id del record."""
+        import json as _json
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT tr.*, m.name as model_name, p.base_text,
+                          l.name as language_name, l.code as language_code
+                   FROM token_results tr
+                   JOIN models m ON m.id = tr.model_id
+                   JOIN prompts p ON p.id = tr.prompt_id
+                   JOIN languages l ON l.id = tr.language_id
+                   WHERE tr.run_id=? AND tr.model_id=?""",
+                (run_id, model_id),
+            ).fetchall()
+            results = [dict(r) for r in rows]
+            cur = conn.execute(
+                """INSERT INTO run_history
+                   (run_id, model_id, model_name, reason,
+                    replaced_by_model_id, replaced_by_model_name, results_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id, model_id, model_name, reason,
+                    replaced_by_model_id, replaced_by_model_name,
+                    _json.dumps(results, default=str),
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def delete_model_results(self, run_id: int, model_id: int) -> int:
+        """Elimina tutti i token_results di un modello in una run."""
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "DELETE FROM token_results WHERE run_id=? AND model_id=?",
+                (run_id, model_id),
+            )
+            conn.commit()
+            return conn.execute("SELECT changes()").fetchone()[0]
+        finally:
+            conn.close()
+
+    def get_run_history(self, run_id: int) -> list[dict]:
+        """Ritorna le voci di storico archiviate per una run."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT id, run_id, model_id, model_name, archived_at, reason,
+                          replaced_by_model_id, replaced_by_model_name
+                   FROM run_history WHERE run_id=? ORDER BY archived_at DESC""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def reconstruct_llm_payloads(self, run_id: int, model_id: int) -> list[dict]:
+        """Ricostruisce i payload llm_call da token_results + snapshot (run senza queue items)."""
+        conn = self.db.get_connection()
+        try:
+            model_row = conn.execute(
+                """SELECT m.*, p.name as provider_name
+                   FROM models m JOIN providers p ON p.id=m.provider_id WHERE m.id=?""",
+                (model_id,),
+            ).fetchone()
+            if not model_row:
+                return []
+            model = dict(model_row)
+
+            run_row = conn.execute(
+                "SELECT study_id FROM experiment_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            study_id = int(run_row["study_id"]) if run_row else None
+
+            result_rows = conn.execute(
+                "SELECT DISTINCT prompt_id, language_id FROM token_results WHERE run_id=? AND model_id=?",
+                (run_id, model_id),
+            ).fetchall()
+
+            payloads = []
+            for r in result_rows:
+                prompt_id   = r["prompt_id"]
+                language_id = r["language_id"]
+
+                lang_row = conn.execute(
+                    "SELECT name, code, script_group, morphology_group FROM languages WHERE id=?",
+                    (language_id,),
+                ).fetchone()
+                if not lang_row:
+                    continue
+                lang = dict(lang_row)
+
+                if lang["code"] == "en":
+                    p_row = conn.execute(
+                        "SELECT base_text FROM prompts WHERE id=?", (prompt_id,)
+                    ).fetchone()
+                    text = p_row["base_text"] if p_row else None
+                else:
+                    snap_row = conn.execute(
+                        """SELECT tc.text FROM run_translation_snapshot rts
+                           JOIN translation_candidates tc ON tc.id = rts.candidate_id
+                           WHERE rts.run_id=? AND rts.prompt_id=? AND rts.language_id=?""",
+                        (run_id, prompt_id, language_id),
+                    ).fetchone()
+                    text = snap_row["text"] if snap_row else None
+
+                if not text:
+                    continue
+
+                payloads.append({
+                    "run_id":        run_id,
+                    "study_id":      study_id,
+                    "prompt_id":     prompt_id,
+                    "language_id":   language_id,
+                    "language_name": lang["name"],
+                    "language_code": lang["code"],
+                    "model_id":      model_id,
+                    "provider":      model["provider_name"],
+                    "model_name":    model["name"],
+                    "cost_per_input":  float(model.get("cost_per_input_token") or 0.0),
+                    "cost_per_output": float(model.get("cost_per_output_token") or 0.0),
+                    "is_reasoning":    bool(model.get("is_reasoning", 0)),
+                    "text":          text,
+                })
+            return payloads
         finally:
             conn.close()
 

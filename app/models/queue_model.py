@@ -255,6 +255,132 @@ class QueueModel:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Redo / Replace model
+    # ------------------------------------------------------------------
+
+    def get_model_llm_payloads(self, run_id: int, model_id: int) -> list[dict]:
+        """Ritorna i payload degli llm_call per un modello dalla coda (qualunque status)."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT payload FROM run_queue WHERE run_id=? AND operation_type='llm_call'",
+                (run_id,),
+            ).fetchall()
+            result = []
+            for r in rows:
+                try:
+                    p = json.loads(r["payload"] or "{}")
+                except (ValueError, TypeError):
+                    p = {}
+                if int(p.get("model_id", -1)) == model_id:
+                    result.append(p)
+            return result
+        finally:
+            conn.close()
+
+    def redo_model_items(self, run_id: int, model_id: int, payloads: list[dict]) -> int:
+        """
+        Resetta a 'pending' gli item llm_call esistenti per il modello.
+        Se non ne esistono (run senza coda), li crea dai payloads forniti.
+        Ritorna il numero di item pronti.
+        """
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, payload FROM run_queue WHERE run_id=? AND operation_type='llm_call'",
+                (run_id,),
+            ).fetchall()
+            ids_to_reset = []
+            for r in rows:
+                try:
+                    p = json.loads(r["payload"] or "{}")
+                except (ValueError, TypeError):
+                    p = {}
+                if int(p.get("model_id", -1)) == model_id:
+                    ids_to_reset.append(r["id"])
+
+            if ids_to_reset:
+                placeholders = ",".join("?" * len(ids_to_reset))
+                conn.execute(
+                    f"""UPDATE run_queue
+                        SET status='pending', started_at=NULL, completed_at=NULL, error_message=NULL
+                        WHERE id IN ({placeholders})""",
+                    ids_to_reset,
+                )
+                conn.commit()
+                return len(ids_to_reset)
+
+            # Nessun item esistente: crea da payloads (run precedenti al queue system)
+            count = 0
+            for p in payloads:
+                item_key = f"llm:p{p['prompt_id']}:l{p['language_id']}:m{model_id}"
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO run_queue
+                       (run_id, operation_type, item_key, payload, status, priority)
+                       VALUES (?, 'llm_call', ?, ?, 'pending', 2)""",
+                    (run_id, item_key, json.dumps(p, default=str)),
+                )
+                count += cur.rowcount
+            conn.commit()
+            return count
+        finally:
+            conn.close()
+
+    def replace_model_items(
+        self,
+        run_id: int,
+        old_model_id: int,
+        new_model_id: int,
+        new_model_info: dict,
+        payloads: list[dict],
+    ) -> int:
+        """
+        Elimina gli item llm_call del vecchio modello e crea quelli per il nuovo.
+        Ritorna il numero di item creati.
+        """
+        conn = self.db.get_connection()
+        try:
+            # Rimuove item del vecchio modello
+            rows = conn.execute(
+                "SELECT id, payload FROM run_queue WHERE run_id=? AND operation_type='llm_call'",
+                (run_id,),
+            ).fetchall()
+            old_ids = []
+            for r in rows:
+                try:
+                    p = json.loads(r["payload"] or "{}")
+                except (ValueError, TypeError):
+                    p = {}
+                if int(p.get("model_id", -1)) == old_model_id:
+                    old_ids.append(r["id"])
+            if old_ids:
+                placeholders = ",".join("?" * len(old_ids))
+                conn.execute(f"DELETE FROM run_queue WHERE id IN ({placeholders})", old_ids)
+
+            # Crea item per il nuovo modello
+            count = 0
+            for old_p in payloads:
+                new_p = dict(old_p)
+                new_p["model_id"]      = new_model_id
+                new_p["model_name"]    = new_model_info["name"]
+                new_p["provider"]      = new_model_info["provider_name"]
+                new_p["cost_per_input"]  = float(new_model_info.get("cost_per_input_token") or 0.0)
+                new_p["cost_per_output"] = float(new_model_info.get("cost_per_output_token") or 0.0)
+                new_p["is_reasoning"]    = bool(new_model_info.get("is_reasoning", 0))
+                item_key = f"llm:p{old_p['prompt_id']}:l{old_p['language_id']}:m{new_model_id}"
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO run_queue
+                       (run_id, operation_type, item_key, payload, status, priority)
+                       VALUES (?, 'llm_call', ?, ?, 'pending', 2)""",
+                    (run_id, item_key, json.dumps(new_p, default=str)),
+                )
+                count += cur.rowcount
+            conn.commit()
+            return count
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Recover stale 'running' items after crash/restart
     # ------------------------------------------------------------------
 
@@ -310,9 +436,24 @@ class QueueModel:
         elif progress["error"] > 0:
             status = RUN_PARTIAL
         else:
-            status = RUN_COMPLETED
+            # Tutti gli item sono DONE — verifica se qualche risposta LLM era vuota/invalida
+            if self._count_invalid_token_results(run_id) > 0:
+                status = RUN_PARTIAL
+            else:
+                status = RUN_COMPLETED
         self.update_run_status(run_id, status)
         return status
+
+    def _count_invalid_token_results(self, run_id: int) -> int:
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM token_results WHERE run_id=? AND response_valid=0",
+                (run_id,),
+            ).fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
 
 
 # ------------------------------------------------------------------

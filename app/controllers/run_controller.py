@@ -8,7 +8,9 @@ Endpoint JSON per monitoraggio, resume e retry selettivo delle RUN.
 from flask import Blueprint, current_app, jsonify, request, redirect, url_for, flash
 
 from app.models import ExperimentModel
-from app.models.queue_model import QueueModel, RUN_QUEUED, ITEM_PENDING, ITEM_ERROR, ITEM_TIMEOUT
+from app.models.queue_model import (
+    QueueModel, RUN_QUEUED, ITEM_PENDING, ITEM_ERROR, ITEM_TIMEOUT, RUN_PARTIAL, RUN_COMPLETED,
+)
 
 run_bp = Blueprint("run", __name__)
 
@@ -127,4 +129,176 @@ def retry_models(run_id: int):
     else:
         flash("Nessuna operazione in errore per i modelli selezionati.", "info")
 
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/retry-errors  →  retry solo gli item in errore/timeout
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/retry-errors", methods=["POST"])
+def retry_errors(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    qm      = _qm()
+    reset_n = qm.reset_items_for_retry(run_id, model_ids=None)
+    if reset_n > 0:
+        qm.update_run_status(run_id, RUN_QUEUED)
+        flash(f"Run #{run_id}: {reset_n} operazioni in errore riaccodate.", "success")
+    else:
+        flash("Nessuna operazione in errore da ritentare.", "info")
+
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/redo-model  →  rifai tutte le chiamate di un modello
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/redo-model", methods=["POST"])
+def redo_model(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    model_id     = request.form.get("model_id", type=int)
+    save_history = request.form.get("save_history") == "1"
+
+    if not model_id:
+        flash("Modello non specificato.", "error")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    em = _em()
+    qm = _qm()
+
+    model = em.get_model_by_id(model_id)
+    if not model:
+        flash("Modello non trovato.", "error")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    model_name = model["name"]
+
+    # 1. Recupera payload (da coda se disponibili, altrimenti ricostruisce da risultati+snapshot)
+    payloads = qm.get_model_llm_payloads(run_id, model_id)
+    if not payloads:
+        payloads = em.reconstruct_llm_payloads(run_id, model_id)
+
+    if not payloads:
+        flash(f"Impossibile ricostruire le chiamate per {model_name}.", "warning")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    # 2. Archivia storico se richiesto
+    if save_history:
+        em.archive_model_results(run_id, model_id, model_name, reason="redo")
+
+    # 3. Elimina i risultati correnti del modello
+    em.delete_model_results(run_id, model_id)
+
+    # 4. Rimetti in coda
+    n = qm.redo_model_items(run_id, model_id, payloads)
+    if n > 0:
+        qm.update_run_status(run_id, RUN_QUEUED)
+        suffix = " (storico salvato)" if save_history else ""
+        flash(f"Run #{run_id}: {n} chiamate per {model_name} riaccodate{suffix}.", "success")
+    else:
+        flash(f"Nessuna chiamata da riaccodare per {model_name}.", "warning")
+
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/replace-model  →  sostituisci un modello con un altro
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/replace-model", methods=["POST"])
+def replace_model(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    old_model_id = request.form.get("old_model_id", type=int)
+    new_model_id = request.form.get("new_model_id", type=int)
+    save_history = request.form.get("save_history") == "1"
+
+    if not old_model_id or not new_model_id:
+        flash("Modello di origine o destinazione non specificato.", "error")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    if old_model_id == new_model_id:
+        flash("Il modello di destinazione è uguale a quello di origine.", "warning")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    em = _em()
+    qm = _qm()
+
+    old_model = em.get_model_by_id(old_model_id)
+    new_model  = em.get_model_by_id(new_model_id)
+
+    if not old_model:
+        flash("Modello di origine non trovato.", "error")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+    if not new_model:
+        flash("Modello di destinazione non trovato.", "error")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    old_name = old_model["name"]
+    new_name  = new_model["name"]
+
+    # 1. Recupera payload del vecchio modello
+    payloads = qm.get_model_llm_payloads(run_id, old_model_id)
+    if not payloads:
+        payloads = em.reconstruct_llm_payloads(run_id, old_model_id)
+
+    if not payloads:
+        flash(f"Impossibile ricostruire le chiamate per {old_name}.", "warning")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    # 2. Archivia storico se richiesto
+    if save_history:
+        em.archive_model_results(
+            run_id, old_model_id, old_name, reason="replace",
+            replaced_by_model_id=new_model_id, replaced_by_model_name=new_name,
+        )
+
+    # 3. Elimina risultati del vecchio modello
+    em.delete_model_results(run_id, old_model_id)
+
+    # 4. Sostituisce item in coda
+    n = qm.replace_model_items(run_id, old_model_id, new_model_id, new_model, payloads)
+    if n > 0:
+        qm.update_run_status(run_id, RUN_QUEUED)
+        suffix = " (storico salvato)" if save_history else ""
+        flash(
+            f"Run #{run_id}: {old_name} sostituito con {new_name} — {n} chiamate riaccodate{suffix}.",
+            "success",
+        )
+    else:
+        flash(f"Nessuna chiamata da sostituire per {old_name}.", "warning")
+
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/revalidate-status  →  ricalcola status (fix run con risposte vuote)
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/revalidate-status", methods=["POST"])
+def revalidate_status(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    qm     = _qm()
+    new_st = qm.recompute_run_status(run_id)
+    label  = {
+        RUN_PARTIAL:   "partial — risposte vuote rilevate",
+        RUN_COMPLETED: "completed",
+    }.get(new_st, new_st)
+    flash(f"Run #{run_id}: status aggiornato → {label}.", "info")
     return redirect(url_for("experiment.detail_experiment", run_id=run_id))

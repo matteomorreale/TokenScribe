@@ -50,34 +50,39 @@
     <h3 style="font-size:.85rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--ts-accent); margin-bottom:.75rem;">
       {{ provider.name }}
     </h3>
+    <form method="post" action="{{ url_for('settings.update_models_bulk') }}">
     <div class="ts-table-wrap">
       <table class="ts-table">
         <thead>
-          <tr><th>Model</th><th>Context</th><th>$/input token</th><th>$/output token</th><th>Active</th><th>Save</th></tr>
+          <tr><th>Model</th><th>Context</th><th>$/M input tokens</th><th>$/M output tokens</th><th>Active</th><th>Reasoning</th></tr>
         </thead>
         <tbody>
           {% for m in models_by_provider.get(provider.id, []) %}
           <tr>
+            <input type="hidden" name="model_ids" value="{{ m.id }}">
             <td style="font-family:var(--ts-mono); font-size:.8rem;">{{ m.name }}</td>
             <td style="color:var(--ts-text-muted);">{{ m.context_window | int | string }}k</td>
-            <form method="post" action="{{ url_for('settings.update_models') }}" style="display:contents;">
-              <input type="hidden" name="model_id" value="{{ m.id }}">
-              <td><input class="ts-input" type="number" name="cost_per_input_token" step="0.0000001"
-                         value="{{ m.cost_per_input_token }}" style="width:120px;"></td>
-              <td><input class="ts-input" type="number" name="cost_per_output_token" step="0.0000001"
-                         value="{{ m.cost_per_output_token }}" style="width:120px;"></td>
-              <td>
-                <input type="checkbox" name="is_active" value="1"
-                       {{ 'checked' if m.is_active else '' }}
-                       style="accent-color:var(--ts-accent); width:16px; height:16px;">
-              </td>
-              <td><button type="submit" class="ts-btn ts-btn-secondary ts-btn-sm">Save</button></td>
-            </form>
+            <td><input class="ts-input" type="number" name="cost_in_{{ m.id }}" step="0.001" min="0"
+                       value="{{ m.cost_per_input_token }}" style="width:100px;"></td>
+            <td><input class="ts-input" type="number" name="cost_out_{{ m.id }}" step="0.001" min="0"
+                       value="{{ m.cost_per_output_token }}" style="width:100px;"></td>
+            <td>
+              <input type="checkbox" name="is_active_{{ m.id }}" value="1"
+                     {{ 'checked' if m.is_active else '' }}
+                     style="accent-color:var(--ts-accent); width:16px; height:16px;">
+            </td>
+            <td>
+              <input type="checkbox" name="is_reasoning_{{ m.id }}" value="1"
+                     {{ 'checked' if m.is_reasoning else '' }}
+                     style="accent-color:var(--ts-warning,#f59e0b); width:16px; height:16px;">
+            </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+    <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm" style="margin-top:.6rem;">Save All</button>
+    </form>
     <!-- Add model -->
     <form method="post" action="{{ url_for('settings.add_model') }}" style="display:flex; gap:.5rem; margin-top:.75rem; align-items:flex-end;">
       <input type="hidden" name="provider_id" value="{{ provider.id }}">

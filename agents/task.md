@@ -298,5 +298,53 @@
     "requires_db_changes": false,
     "notes_for_agent": "GET/POST /translations/<id>/edit reuses translations/form.html with editing=True; language is shown read-only. TranslationModel.update_candidate_text() updates text only. GET /prompts/<id>/translations/export.json returns a JSON attachment with study, prompt, and all candidates+scores+MAGI data via get_candidates_for_export(). View modal on detail.html uses data-ts-view-text / data-ts-view-title attributes."
   }
+  ,
+  {
+    "task_id": "T022",
+    "title": "Async run queue — QueueModel + QueueService",
+    "status": "completed",
+    "dependencies": ["T004", "T007"],
+    "affected_modules": ["QueueModel", "QueueService", "ExperimentController"],
+    "affected_files": [
+      "app/models/queue_model.py",
+      "app/services/queue_service.py",
+      "app/models/database.py"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New table: run_queue. QueueService is a daemon thread (ts-queue-worker) started in app factory. Dispatches: llm_call, magi_phase2, compute_pei, finalize_pei_groups, snapshot_translations. Each item runs in a ThreadPoolExecutor with per-type timeouts (_TIMEOUTS dict). Item payload embeds all data the worker needs (model_name, provider, text, etc.) so no DB join is needed at dequeue time. QueueModel.recompute_run_status() re-derives experiment_runs.status after each item completes."
+  },
+  {
+    "task_id": "T023",
+    "title": "LLM resilience: model_not_found fallback + Qwen region setting",
+    "status": "completed",
+    "dependencies": ["T022"],
+    "affected_modules": ["LLMService", "QueueService", "SettingsController"],
+    "affected_files": [
+      "app/services/llm_service.py",
+      "app/services/queue_service.py",
+      "app/controllers/settings_controller.py",
+      "app/views/templates/settings/dashboard.html",
+      "config.py"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "TokenScribeCallResult gains model_not_found: bool. _is_model_not_found(str) detects 404/deprecation across all providers (not_found_error, error code: 404 + model, no longer available, startswith 404). QueueService._get_fallback_model(provider, exclude_id, original_name) selects same-tier replacement (flash→flash, sonnet→sonnet, turbo→turbo, etc.) from active models; updates model_id in token_results insert to avoid FK violation. Qwen region: new settings key qwen_region (china|international) selects between dashscope.aliyuncs.com and dashscope-intl.aliyuncs.com. Saved via save_api_keys route. Settings dashboard has a select dropdown. Removed invalid models: claude-sonnet-4 and claude-opus-4 (no version suffix). Deactivated: gemini-2.0-flash (deprecated by Google, no longer available to new users)."
+  }
+  ,
+  {
+    "task_id": "T024",
+    "title": "Pricing unit migration: $/token → $/million tokens",
+    "status": "completed",
+    "dependencies": ["T022"],
+    "affected_modules": ["DatabaseManager", "LLMService", "ExperimentModel", "SettingsController"],
+    "affected_files": [
+      "config.py",
+      "app/models/database.py",
+      "app/services/llm_service.py",
+      "app/models/experiment_model.py",
+      "app/views/templates/settings/dashboard.html"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "models.cost_per_input_token and cost_per_output_token now store USD per million tokens ($/M), not per single token. One-shot migration in _migrate_schema() multiplies all non-zero values × 1_000_000; guarded by settings key pricing_unit='per_million' so it never runs twice. config.py DEFAULT_MODELS updated to per-million values. Cost calculations in llm_service.py and experiment_model.get_results_by_run() divide by 1_000_000. Settings UI headers changed to '$/M input tokens' / '$/M output tokens'; step='0.001'. The stored token_results.cost column is not touched (was correct at insert time and is anyway overwritten by the dynamic recomputation)."
+  }
 ]
 ```
