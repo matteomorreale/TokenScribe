@@ -8,7 +8,7 @@ from flask import (
     url_for, flash, current_app, jsonify
 )
 from app.models import StudyModel, ExperimentModel, PromptModel, TranslationModel, SettingsModel, SelectionScoreModel
-from app.models.queue_model import QueueModel, RUN_QUEUED
+from app.models.queue_model import QueueModel, RUN_QUEUED, RUN_RUNNING
 from app.services import LLMService, ScoringService, MAGIService, get_magi_status
 
 experiment_bp = Blueprint("experiment", __name__)
@@ -344,6 +344,7 @@ def detail_experiment(run_id: int):
     progress    = _qm().get_run_progress(run_id)
     all_models  = em.get_all_models()
     run_history = em.get_run_history(run_id)
+    is_active = run.get("status") in (RUN_QUEUED, RUN_RUNNING)
     return render_template(
         "experiments/detail.html",
         run=run, results=results, pei_results=pei_results, pei_group_results=pei_group_results,
@@ -352,6 +353,7 @@ def detail_experiment(run_id: int):
         progress=progress,
         all_models=all_models,
         run_history=run_history,
+        is_active=is_active,
     )
 
 

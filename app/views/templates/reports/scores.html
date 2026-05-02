@@ -138,7 +138,7 @@
   <p style="font-size:.8rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
     Score = SFS &minus; 0.5&middot;PEI &minus; 0.5&middot;|LER&minus;1| &nbsp;&nbsp;|&nbsp;&nbsp;
     MAGI? = rank &gt; max(1, &lfloor;n/4&rfloor;) &nbsp;&nbsp;|&nbsp;&nbsp;
-    PEI from most recent experiment run for this prompt.
+    PEI from most recent experiment run for this prompt &mdash; <em>model-invariant</em>: PEI depends only on the approved translation texts, not on which LLM was used.
   </p>
   {% for prompt_id, scores in selection_scores_by_prompt.items() %}
   <div style="padding:.75rem 1rem .25rem; border-top:1px solid var(--ts-border);">

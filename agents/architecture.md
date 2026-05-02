@@ -74,6 +74,7 @@ TokenScribe/
 ### Experiment Execution
 
 - controllers/experiment_controller.py — create/delete runs; readiness check on GET /new
+- controllers/run_controller.py — JSON queue-status polling, resume/retry, redo-model, replace-model
 - models/experiment_model.py
 - models/queue_model.py
 - services/llm_service.py
@@ -134,11 +135,20 @@ TokenScribe/
 ### ExperimentModel
 
 - `get_results_by_run(run_id)` — rows enriched with: `reasoning_tokens`, `cost_visible_only`, `ror`, `reasoning_observed`, `reasoning_state` (4-way: `active` | `capable_but_inactive` | `anomaly` | `non_reasoning`), `prompt_notes`, `is_reasoning_capable`; logs WARNING for `anomaly` state
-- `get_translation_scores_by_run(run_id)` — joins `run_translation_snapshot` → immune to re-approvals;
-  includes all MAGI fields; `magi_judges` deserialized to dict before returning
+- `get_translation_scores_by_run(run_id)` — joins `run_translation_snapshot` → immune to re-approvals; includes all MAGI fields; `magi_judges` deserialized to dict before returning
 - `get_latest_pei_for_prompt(prompt_id)` — most recent PEI from `pei_results` (fallback when no approved translations exist at MAGI Phase 1 compute time)
 - `snapshot_translations(run_id, study_id)` — freezes approved translations at run start
 - `delete_run(run_id)` / `delete_runs_bulk(run_ids)` — cascade-deletes token_results
+- `archive_model_results(run_id, model_id, model_name, reason, replaced_by_model_id, replaced_by_model_name)` — snapshots token_results for a model into `run_history` before redo/replace
+- `delete_model_results(run_id, model_id)` — deletes token_results for a specific model in a run
+- `get_run_history(run_id)` — returns archived history entries for a run (without `results_json`)
+- `reconstruct_llm_payloads(run_id, model_id)` — rebuilds llm_call payloads from token_results + run_translation_snapshot; used for runs created before the queue system (no run_queue rows)
+
+### QueueModel (new redo/replace methods)
+
+- `get_model_llm_payloads(run_id, model_id)` — returns all llm_call payloads for a model from run_queue (any status)
+- `redo_model_items(run_id, model_id, payloads)` — resets existing llm_call items for the model to `pending`; if no queue items exist, creates them from `payloads` (legacy runs support)
+- `replace_model_items(run_id, old_model_id, new_model_id, new_model_info, payloads)` — deletes old model's queue items and inserts new ones for `new_model_id` with updated payload fields
 
 ## UX Patterns
 
@@ -182,6 +192,29 @@ Closed via ×, Escape, or click-outside.
 4. Check pre-run readiness semaphore (`/prompts/<id>` widget + `/experiments/new` table)
 5. Run experiment → call LLM APIs → snapshot translations → store token results → compute PEI
 6. Export dataset (CSV/JSON) with full enrichment (SFS, LER, PEI, MAGI, token efficiency)
+7. (Optional) Redo/Replace model — on completed/partial run: optionally archive results to `run_history`, delete model results, reset/swap queue items, re-queue under same or new model
+
+## Redo / Replace Model Flow
+
+Available on `completed` or `partial` runs via the "Gestione Modelli" card in `experiments/detail.html`.
+
+**Redo** (`POST /experiments/<id>/redo-model`):
+
+1. Retrieve llm_call payloads from run_queue; fall back to `reconstruct_llm_payloads()` for legacy runs
+2. Optionally archive current token_results to `run_history` (reason=`"redo"`)
+3. Delete token_results for the model
+4. Reset existing queue items to `pending`; or insert fresh items if none exist
+5. Update run status → `queued`
+
+**Replace** (`POST /experiments/<id>/replace-model`):
+
+1. Retrieve payloads for the old model
+2. Optionally archive to `run_history` (reason=`"replace"`, `replaced_by_model_*` filled)
+3. Delete token_results for old model
+4. Delete old model's queue items; insert new items with new model fields (model_id, model_name, provider, costs, is_reasoning)
+5. Update run status → `queued`
+
+PEI is not recomputed (it depends on translations, not model calls).
 
 ## LLM Resilience
 

@@ -346,5 +346,23 @@
     "requires_db_changes": true,
     "notes_for_agent": "models.cost_per_input_token and cost_per_output_token now store USD per million tokens ($/M), not per single token. One-shot migration in _migrate_schema() multiplies all non-zero values × 1_000_000; guarded by settings key pricing_unit='per_million' so it never runs twice. config.py DEFAULT_MODELS updated to per-million values. Cost calculations in llm_service.py and experiment_model.get_results_by_run() divide by 1_000_000. Settings UI headers changed to '$/M input tokens' / '$/M output tokens'; step='0.001'. The stored token_results.cost column is not touched (was correct at insert time and is anyway overwritten by the dynamic recomputation)."
   }
+  ,
+  {
+    "task_id": "T025",
+    "title": "Redo / Replace model calls on completed or partial runs",
+    "status": "completed",
+    "dependencies": ["T022"],
+    "affected_modules": ["DatabaseManager", "ExperimentModel", "QueueModel", "RunController", "ExperimentController", "Views"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/models/experiment_model.py",
+      "app/models/queue_model.py",
+      "app/controllers/run_controller.py",
+      "app/controllers/experiment_controller.py",
+      "app/views/templates/experiments/detail.html"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New table: run_history (run_id, model_id, model_name, reason, replaced_by_model_id, replaced_by_model_name, results_json). Created via CREATE TABLE IF NOT EXISTS in both _create_tables() and _migrate_schema() guard. New ExperimentModel methods: archive_model_results(), delete_model_results(), get_run_history(), reconstruct_llm_payloads(). New QueueModel methods: get_model_llm_payloads(), redo_model_items(), replace_model_items(). reconstruct_llm_payloads() handles legacy runs (no queue items) by rebuilding payloads from token_results + run_translation_snapshot. New controller endpoints: POST /experiments/<id>/redo-model, POST /experiments/<id>/replace-model — both accept save_history=1 checkbox. detail.html: 'Gestione Modelli' card (visible on completed/partial), per-model Rifai/Sostituisci buttons, modal-redo and modal-replace modals, 'Storico Archivi' card. all_models and run_history now passed to detail template. PEI is NOT recomputed on redo/replace (it is independent of model calls)."
+  }
 ]
 ```

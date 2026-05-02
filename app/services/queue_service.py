@@ -296,9 +296,7 @@ class QueueService:
         if not result.success:
             raise RuntimeError(f"LLM call failed: {result.error}")
 
-        visible_output_tokens = self._scorer.compute_structural_metrics(
-            result.response_text or ""
-        )["token_count"]
+        visible_output_tokens = result.output_tokens - result.reasoning_tokens
         is_valid = bool((result.response_text or "").strip()) and visible_output_tokens > 0
 
         # Rimuove eventuali record invalidi precedenti (es. da un retry) prima di inserire

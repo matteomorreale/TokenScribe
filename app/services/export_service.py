@@ -126,6 +126,14 @@ class ExportService:
     ) -> str:
         """Convert results to a structured JSON dataset."""
         dataset = {
+            "_notes": {
+                "pei": (
+                    "PEI (Prompt Equivalence Index) is model-invariant: it is computed from the approved "
+                    "translation candidate texts (CV of char_length, word_count, token_count across languages). "
+                    "Identical PEI values across runs using different LLMs is expected and correct — "
+                    "PEI changes only when the set of approved translations changes."
+                )
+            },
             "token_results": results,
             "pei_results": pei_results or [],
             "pei_group_results": pei_group_results or [],

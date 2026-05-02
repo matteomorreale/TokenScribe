@@ -17,8 +17,14 @@
 
 <div class="ts-card" style="margin-bottom:1.25rem; padding:1rem 1.5rem; background:rgba(108,99,255,.06); border-color:rgba(108,99,255,.3);">
   <p style="font-size:.85rem; color:var(--ts-text-muted);">
-    <strong style="color:var(--ts-text);">PEI</strong> is the mean coefficient of variation (CV) across character length, word count, and neutral token count.
-    Lower PEI = more structurally equivalent translations. Goal: minimize PEI.
+    <strong style="color:var(--ts-text);">PEI</strong> is the mean coefficient of variation (CV) across character length, word count, and neutral token count
+    of the <em>approved translation candidate texts</em>. Lower PEI = more structurally equivalent translations. Goal: minimize PEI.
+  </p>
+  <p style="font-size:.82rem; color:var(--ts-text-muted); margin-top:.5rem; border-top:1px solid rgba(108,99,255,.2); padding-top:.5rem;">
+    <strong style="color:var(--ts-warning, #e6a817);">Model-invariant metric.</strong>
+    PEI depends only on the approved translation texts, not on the LLM used for the run.
+    Identical PEI values across runs with different models is expected and mathematically correct — it means the same translation candidates were evaluated.
+    PEI changes only when the set of approved translations is updated.
   </p>
 </div>
 

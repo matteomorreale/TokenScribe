@@ -136,6 +136,16 @@ run_queue                     -- async work items for QueueService daemon thread
   created_at, started_at, completed_at
   UNIQUE(run_id, operation_type, item_key)
 
+run_history                   -- archivio storico per redo/replace (snapshot JSON dei token_results)
+  id, run_id → experiment_runs.id,
+  model_id    INT NOT NULL,            -- ID del modello archiviato
+  model_name  TEXT NOT NULL,
+  archived_at TEXT NOT NULL DEFAULT now,
+  reason      TEXT NOT NULL,           -- "redo" | "replace"
+  replaced_by_model_id   INT,          -- solo per reason="replace"
+  replaced_by_model_name TEXT,
+  results_json TEXT NOT NULL DEFAULT '[]'  -- snapshot completo dei token_results (array JSON)
+
 settings
   id, key (UNIQUE), value, updated_at
 
@@ -163,6 +173,7 @@ languages ──> writing_systems
 experiment_runs ──< token_results
 experiment_runs ──< pei_results
 experiment_runs ──< pei_group_results
+experiment_runs ──< run_history
 token_results ──> models ──> providers
 ```
 
@@ -178,7 +189,8 @@ token_results ──> models ──> providers
 
 ## Key Constraints
 
-- `token_results`: INSERT only, no UPDATE (immutable runs)
+- `token_results`: normally INSERT-only; the redo/replace flow first archives rows to `run_history` then deletes them for the target model before re-queueing, so the immutability invariant holds per-run-per-model within a single execution cycle
+- `run_history`: INSERT-only archive; one row per (run_id, model_id, operation); `results_json` is a snapshot of all token_results rows for that model at the moment of archival
 - `run_translation_snapshot`: written once at run start via `snapshot_translations(run_id, study_id)`;
   `get_translation_scores_by_run` JOINs this table, not `approved_translations`, so historical
   reports are immune to re-approvals

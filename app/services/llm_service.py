@@ -33,6 +33,7 @@ class TokenScribeCallResult:
     """Result of a single LLM API call."""
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
     cost: float = 0.0
     source: str = "api_reported"  # or "estimated"
     response_text: str = ""
@@ -200,9 +201,13 @@ class LLMService:
                 usage = response.usage
                 content = response.choices[0].message.content or "" if response.choices else ""
 
+            reasoning_toks = 0
+            if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
+                reasoning_toks = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
+                reasoning_tokens=reasoning_toks,
                 response_text=content,
                 source="api_reported",
             )
@@ -245,9 +250,14 @@ class LLMService:
         if not api_key:
             return TokenScribeCallResult(success=False, error="Google API key not configured")
         try:
-            # Preflight: grpcio-status must match grpcio or api_core raises NameError
+            # Preflight: grpcio-status must be importable AND injected into google.api_core.exceptions.
+            # That module loads at Flask startup; if grpcio-status wasn't ready then, rpc_status is
+            # undefined in its namespace and any API error raises NameError at rpc_status.from_call().
             try:
-                from grpc_status import rpc_status as _rpc_status  # noqa: F401
+                from grpc_status import rpc_status as _rpc_status
+                import google.api_core.exceptions as _gae
+                if not getattr(_gae, "rpc_status", None):
+                    _gae.rpc_status = _rpc_status
             except Exception as grpc_err:
                 return TokenScribeCallResult(
                     success=False,
@@ -259,9 +269,12 @@ class LLMService:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt_text)
             usage = response.usage_metadata
+            thoughts_toks = getattr(usage, "thoughts_token_count", 0) or 0
+            visible_toks = usage.candidates_token_count or 0
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_token_count,
-                output_tokens=usage.candidates_token_count,
+                output_tokens=visible_toks + thoughts_toks,
+                reasoning_tokens=thoughts_toks,
                 response_text=response.text or "",
                 source="api_reported",
             )
@@ -292,10 +305,28 @@ class LLMService:
                 max_tokens=max_tokens,
             )
             usage = response.usage
+            content = response.choices[0].message.content or "" if response.choices else ""
+
+            # Some DeepSeek models (e.g. deepseek-v4-flash) have an internal reasoning phase
+            # that consumes tokens before producing visible output. If we hit the cap and
+            # content is empty, retry once with a larger budget.
+            if not content and usage and usage.completion_tokens >= max_tokens and max_tokens < 8192:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt_text}],
+                    max_tokens=8192,
+                )
+                usage = response.usage
+                content = response.choices[0].message.content or "" if response.choices else ""
+
+            reasoning_toks = 0
+            if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
+                reasoning_toks = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
-                response_text=response.choices[0].message.content or "",
+                reasoning_tokens=reasoning_toks,
+                response_text=content,
                 source="api_reported",
             )
         except Exception as e:
