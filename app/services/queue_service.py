@@ -296,11 +296,12 @@ class QueueService:
         if not result.success:
             raise RuntimeError(f"LLM call failed: {result.error}")
 
+        repetition_index = int(payload.get("repetition_index", 0))
+
         visible_output_tokens = result.output_tokens - result.reasoning_tokens
         is_valid = bool((result.response_text or "").strip()) and visible_output_tokens > 0
 
-        # Rimuove eventuali record invalidi precedenti (es. da un retry) prima di inserire
-        em.delete_invalid_token_result(run_id, prompt_id, language_id, model_id)
+        em.delete_token_result(run_id, prompt_id, language_id, model_id, repetition_index)
 
         em.insert_token_result(
             run_id=run_id,
@@ -314,6 +315,7 @@ class QueueService:
             response_text=result.response_text,
             visible_output_tokens=visible_output_tokens,
             response_valid=is_valid,
+            repetition_index=repetition_index,
         )
 
         if not is_valid:

@@ -233,7 +233,12 @@
   <div class="ts-stat-card">
     <div class="ts-stat-label">Reasoning Tokens</div>
     <div class="ts-stat-value">{{ results|sum(attribute='reasoning_tokens') | int }}</div>
-    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">api_reported − visible (0 for non-reasoning models)</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">max(0, api − visible) · real hidden reasoning</div>
+  </div>
+  <div class="ts-stat-card">
+    <div class="ts-stat-label">Tokenizer Drift</div>
+    <div class="ts-stat-value">{{ results|sum(attribute='tokenizer_drift') | int }}</div>
+    <div style="font-size:.7rem; color:var(--ts-text-muted); margin-top:.2rem;">max(0, visible − api) · phantom tokens from tokenizer gap</div>
   </div>
   <div class="ts-stat-card">
     <div class="ts-stat-label">Cost (visible output)</div>
@@ -264,9 +269,11 @@
           <th>Provider</th><th>Model</th>
           <th>Input Tok.</th>
           <th title="tiktoken of visible response text — use for linguistic comparisons">Visible Out</th>
-          <th title="api_reported_output_tokens minus visible_output_tokens — 0 for non-reasoning models">Reasoning</th>
+          <th title="max(0, api_reported − visible) — hidden reasoning tokens, always ≥ 0">Reasoning</th>
+          <th title="max(0, visible − api_reported) — phantom tokens from tokenizer gap, always ≥ 0">Drift</th>
           <th title="reasoning_tokens / visible_output_tokens — measures internal reasoning load">ROR</th>
           <th title="cost computed on visible output tokens only — comparable across all models">Cost (visible)</th>
+          <th title="cost of reasoning tokens only — never negative, never cancelled by drift">Cost (reasoning)</th>
           <th title="cost billed by the API including reasoning tokens">Cost (API)</th>
           <th>Source</th>
           <th>AI Response</th>
@@ -286,8 +293,10 @@
             {{ r.visible_output_tokens if r.visible_output_tokens is not none else '—' }}
           </td>
           <td style="font-variant-numeric:tabular-nums; color:{% if r.reasoning_tokens and r.reasoning_tokens > 0 %}var(--ts-warning, #f59e0b){% else %}var(--ts-text-muted){% endif %};">{{ r.reasoning_tokens if r.reasoning_tokens is not none else '—' }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:{% if r.tokenizer_drift and r.tokenizer_drift > 0 %}var(--ts-info, #38bdf8){% else %}var(--ts-text-muted){% endif %};">{{ r.tokenizer_drift if r.tokenizer_drift is not none else '—' }}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ "%.1f"|format(r.ror) if r.ror is not none else '—' }}</td>
           <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(r.cost_visible_only) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:{% if r.cost_reasoning and r.cost_reasoning > 0 %}var(--ts-warning, #f59e0b){% else %}var(--ts-text-muted){% endif %};">${{ "%.6f"|format(r.cost_reasoning) }}</td>
           <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">${{ "%.6f"|format(r.cost) }}</td>
           <td><span class="ts-badge ts-badge-{{ 'approved' if r.source == 'api_reported' else 'pending' }}">{{ r.source }}</span></td>
           <td>
@@ -300,6 +309,7 @@
               data-source="{{ r.source | default('') }}"
               data-visible-output-tokens="{{ r.visible_output_tokens | default('') }}"
               data-reasoning-tokens="{{ r.reasoning_tokens | default('') }}"
+              data-tokenizer-drift="{{ r.tokenizer_drift | default('') }}"
               data-api-reported-output-tokens="{{ r.api_reported_output_tokens | default('') }}"
               data-ror="{{ r.ror | default('') }}"
               data-visible-output-text-length="{{ r.visible_output_text_length | default('') }}"
@@ -312,8 +322,9 @@
       </tbody>
       <tfoot>
         <tr style="border-top:2px solid var(--ts-border); font-weight:600;">
-          <td colspan="9" style="text-align:right; font-size:.78rem; color:var(--ts-text-muted); padding-right:.75rem;">Totale</td>
+          <td colspan="10" style="text-align:right; font-size:.78rem; color:var(--ts-text-muted); padding-right:.75rem;">Totale</td>
           <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(results|sum(attribute='cost_visible_only')) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ts-warning,#f59e0b);">${{ "%.6f"|format(results|sum(attribute='cost_reasoning')) }}</td>
           <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">${{ "%.6f"|format(results|sum(attribute='cost')) }}</td>
           <td colspan="2"></td>
         </tr>
@@ -321,7 +332,7 @@
     </table>
   </div>
   <p style="font-size:.75rem; color:var(--ts-text-muted); padding:.5rem 1rem 0;">
-    <strong>Methodological note:</strong> <em>Visible Out</em> uses tiktoken (cl100k_base). For non-OpenAI models the internal tokenizer may differ slightly, producing small non-zero <em>Reasoning</em> values even on non-reasoning models. A model is flagged as reasoning only when <code>reasoning_tokens &gt; 10</code> (noise threshold) to avoid false positives from tokenizer drift.
+    <strong>Methodological note:</strong> <em>Reasoning</em> = max(0, api_reported − visible) — real hidden tokens, always ≥ 0. <em>Drift</em> = max(0, visible − api_reported) — phantom tokens from tokenizer mismatch (e.g. tiktoken vs DeepSeek native), always ≥ 0. The two fields are mutually exclusive per row so they never cancel. <em>Cost (reasoning)</em> uses the clamped reasoning tokens and is safe to sum across mixed runs.
   </p>
   {% if results|sum(attribute='input_tokens') > 0 and results|sum(attribute='cost') == 0 %}
   <p style="font-size:.8rem; color:var(--ts-warning,#f59e0b); padding:.4rem 1rem .75rem; border-top:1px solid var(--ts-border); margin:0;">
@@ -521,11 +532,12 @@
       const tokenMode = d.tokenAccountingMode || 'N/A';
       const visibleOut = d.visibleOutputTokens || 'N/A';
       const reasoningTokens = d.reasoningTokens || '0';
+      const tokenizerDrift = d.tokenizerDrift || '0';
       const apiOut = d.apiReportedOutputTokens || 'N/A';
       const ror = d.ror || 'N/A';
       const visibleLen = d.visibleOutputTextLength || 'N/A';
 
-      metaContainer.textContent = `${provider} / ${model} • source: ${source} • visible_out: ${visibleOut} • reasoning: ${reasoningTokens} • api_out: ${apiOut} • ROR: ${ror} • visible_len: ${visibleLen}`;
+      metaContainer.textContent = `${provider} / ${model} • source: ${source} • visible_out: ${visibleOut} • reasoning: ${reasoningTokens} • drift: ${tokenizerDrift} • api_out: ${apiOut} • ROR: ${ror} • visible_len: ${visibleLen}`;
       modal.classList.add('active');
     }
   }

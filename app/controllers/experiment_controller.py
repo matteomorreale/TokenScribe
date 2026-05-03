@@ -108,6 +108,8 @@ def new_experiment(study_id: int):
     # ------------------------------------------------------------------ POST
     selected_model_ids = request.form.getlist("model_ids", type=int)
     notes = request.form.get("notes", "").strip()
+    repetitions_per_cell = max(1, min(10, request.form.get("repetitions", type=int) or 3))
+    force_magi = bool(request.form.get("force_magi"))
     if not selected_model_ids:
         flash("Select at least one model.", "error")
         prompt_ids = [p["id"] for p in prompts]
@@ -193,7 +195,7 @@ def new_experiment(study_id: int):
 
     for prompt in prompts:
         r = readiness.get(prompt["id"], {})
-        if r.get("magi_count", 0) == 0 and r.get("scored_count", 0) > 0:
+        if (force_magi or r.get("magi_count", 0) == 0) and r.get("scored_count", 0) > 0:
             approved = _tm().get_approved_by_prompt(prompt["id"])
             scored   = [c for c in approved if c.get("sfs") is not None]
             if scored:
@@ -240,7 +242,7 @@ def new_experiment(study_id: int):
         )
 
     # ------------------------------------------------------------------
-    # 3. LLM calls (priority 2) — un item per prompt × model × language
+    # 3. LLM calls (priority 2) — repetitions_per_cell items per prompt × model × language
     # ------------------------------------------------------------------
     llm_item_count = 0
     for prompt in prompts:
@@ -274,28 +276,30 @@ def new_experiment(study_id: int):
             if not model_info:
                 continue
             for trans in inputs:
-                qm.enqueue(
-                    run_id=run_id,
-                    operation_type="llm_call",
-                    item_key=f"llm:p{prompt['id']}:l{trans['language_id']}:m{model_id}",
-                    payload={
-                        "run_id":       run_id,
-                        "study_id":     study_id,
-                        "prompt_id":    prompt["id"],
-                        "language_id":  trans["language_id"],
-                        "language_name": trans["language_name"],
-                        "language_code": trans["language_code"],
-                        "model_id":     model_id,
-                        "provider":     model_info["provider_name"],
-                        "model_name":   model_info["name"],
-                        "cost_per_input":  model_info.get("cost_per_input_token", 0.0) or 0.0,
-                        "cost_per_output": model_info.get("cost_per_output_token", 0.0) or 0.0,
-                        "is_reasoning":    bool(model_info.get("is_reasoning", 0)),
-                        "text":         trans["text"],
-                    },
-                    priority=2,
-                )
-                llm_item_count += 1
+                for rep in range(repetitions_per_cell):
+                    qm.enqueue(
+                        run_id=run_id,
+                        operation_type="llm_call",
+                        item_key=f"llm:p{prompt['id']}:l{trans['language_id']}:m{model_id}:r{rep}",
+                        payload={
+                            "run_id":            run_id,
+                            "study_id":          study_id,
+                            "prompt_id":         prompt["id"],
+                            "language_id":       trans["language_id"],
+                            "language_name":     trans["language_name"],
+                            "language_code":     trans["language_code"],
+                            "model_id":          model_id,
+                            "provider":          model_info["provider_name"],
+                            "model_name":        model_info["name"],
+                            "cost_per_input":    model_info.get("cost_per_input_token", 0.0) or 0.0,
+                            "cost_per_output":   model_info.get("cost_per_output_token", 0.0) or 0.0,
+                            "is_reasoning":      bool(model_info.get("is_reasoning", 0)),
+                            "text":              trans["text"],
+                            "repetition_index":  rep,
+                        },
+                        priority=2,
+                    )
+                    llm_item_count += 1
 
     # ------------------------------------------------------------------
     # 4. Compute PEI per prompt (priority 3)

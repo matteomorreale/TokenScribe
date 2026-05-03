@@ -98,20 +98,27 @@ class ExperimentModel:
         finally:
             conn.close()
 
-    def delete_invalid_token_result(
+    def delete_token_result(
         self,
         run_id: int,
         prompt_id: int,
         language_id: int,
         model_id: int,
+        repetition_index: int = 0,
     ) -> None:
-        """Rimuove record con response_valid=0 per questa combinazione (usato prima di un retry)."""
+        """Delete the token_results row for this (run, prompt, language, model, repetition) key.
+
+        Called unconditionally before every insert so that retries and fallback
+        calls produce exactly one row per key, regardless of whether the previous
+        attempt succeeded or failed.
+        """
         conn = self.db.get_connection()
         try:
             conn.execute(
                 """DELETE FROM token_results
-                   WHERE run_id=? AND prompt_id=? AND language_id=? AND model_id=? AND response_valid=0""",
-                (run_id, prompt_id, language_id, model_id),
+                   WHERE run_id=? AND prompt_id=? AND language_id=? AND model_id=?
+                     AND repetition_index=?""",
+                (run_id, prompt_id, language_id, model_id, repetition_index),
             )
             conn.commit()
         finally:
@@ -155,6 +162,7 @@ class ExperimentModel:
         normalized_output_tokens: int = None,
         visible_output_tokens: int = None,
         response_valid: bool = None,
+        repetition_index: int = 0,
     ) -> int:
         conn = self.db.get_connection()
         try:
@@ -177,13 +185,14 @@ class ExperimentModel:
                     input_tokens, output_tokens,
                     visible_output_text_length, api_reported_output_tokens,
                     cost, source, token_accounting_mode, response_text,
-                    normalized_output_tokens, visible_output_tokens, response_valid)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    normalized_output_tokens, visible_output_tokens, response_valid,
+                    repetition_index)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
                  cost, source, token_accounting_mode, response_text,
-                 vot, vot, rv),
+                 vot, vot, rv, repetition_index),
             )
             conn.commit()
             return cur.lastrowid
@@ -243,7 +252,9 @@ class ExperimentModel:
                 cpo = d.get("cost_per_output_token") or 0.0
                 d["visible_output_tokens"] = vot
                 d["reasoning_tokens"] = max(0, arot - vot)
+                d["tokenizer_drift"] = max(0, vot - arot)
                 d["cost_visible_only"] = round(vot * cpo / 1_000_000, 8)
+                d["cost_reasoning"] = round(d["reasoning_tokens"] * cpo / 1_000_000, 8)
                 d["cost"] = round(((d.get("input_tokens") or 0) * cpi + arot * cpo) / 1_000_000, 8)
                 d["ror"] = round(d["reasoning_tokens"] / vot, 3) if vot > 0 else 0.0
                 is_capable = bool(d.get("is_reasoning_capable"))

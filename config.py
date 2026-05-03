@@ -21,7 +21,9 @@ class TokenScribeConfig:
     # Minimum reasoning_tokens to classify a model as a reasoning model.
     # Values below this threshold are treated as tokenizer drift (tiktoken vs
     # provider tokenizer) rather than true hidden reasoning chains.
-    REASONING_THRESHOLD = 10
+    # Set to 50 — observed drift on non-reasoning models peaks at ~20 tokens,
+    # so 50 provides a clear margin without masking real reasoning chains (≥100 tokens).
+    REASONING_THRESHOLD = 50
 
     # Supported LLM providers
     SUPPORTED_PROVIDERS = [

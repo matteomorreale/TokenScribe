@@ -115,8 +115,22 @@
         </div>
       </div>
       <div class="ts-form-group">
+        <label class="ts-label" for="repetitions">Repetitions per cell</label>
+        <input class="ts-input" type="number" id="repetitions" name="repetitions"
+               value="3" min="1" max="10" style="width:6rem;">
+        <small style="display:block; margin-top:.3rem; color:var(--ts-text-muted); font-size:.75rem;">
+          Number of independent LLM calls per (prompt × language × model) cell. Min 1, max 10.
+        </small>
+      </div>
+      <div class="ts-form-group">
         <label class="ts-label" for="notes">Notes (optional)</label>
         <input class="ts-input" type="text" id="notes" name="notes" placeholder="e.g. First run with Llama models">
+      </div>
+      <div class="ts-form-group" style="margin-bottom:.85rem;">
+        <label class="ts-checkbox-item" title="Re-compute Phase 1 scores and re-queue Phase 2 LLM judge calls even if MAGI scores already exist for these candidates">
+          <input type="checkbox" name="force_magi" value="1">
+          Force MAGI re-evaluation <span style="font-size:.72rem; color:var(--ts-text-muted);">(overrides existing scores)</span>
+        </label>
       </div>
       <div class="ts-card" style="background:rgba(249,199,79,.06); border-color:rgba(249,199,79,.3); margin-bottom:1.25rem; padding:1rem;">
         <p style="font-size:.82rem; color:var(--ts-warning);">

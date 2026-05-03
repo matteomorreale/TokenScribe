@@ -6,8 +6,12 @@ Author: Matteo Morreale
 import json
 from datetime import datetime, timezone
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response
-from app.models import StudyModel
+from app.models import StudyModel, ExperimentModel, PromptModel, TranslationModel, SettingsModel, SelectionScoreModel
+from app.models.queue_model import QueueModel, RUN_QUEUED
 from app.services import get_magi_status
+from app.services.scoring_service import ScoringService
+
+_scorer = ScoringService()
 
 study_bp = Blueprint("study", __name__, url_prefix="/studies")
 
@@ -52,14 +56,18 @@ def detail_study(study_id: int):
     if not study:
         flash("Study not found.", "error")
         return redirect(url_for("study.list_studies"))
-    from app.models import PromptModel, ExperimentModel, SettingsModel
     em = ExperimentModel(current_app.config["DB"])
     prompts = PromptModel(current_app.config["DB"]).get_by_study(study_id)
     runs = em.get_runs_by_study(study_id)
     settings = SettingsModel(current_app.config["DB"]).get_all()
     magi_status = get_magi_status(settings, em)
+    prompt_ids = [p["id"] for p in prompts]
+    readiness = SelectionScoreModel(current_app.config["DB"]).get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
+    judge_ids = SettingsModel(current_app.config["DB"]).get_magi_judge_ids()
+    judges_ok = all(judge_ids) and len(judge_ids) == 3
     return render_template(
-        "studies/detail.html", study=study, prompts=prompts, runs=runs, magi_status=magi_status
+        "studies/detail.html", study=study, prompts=prompts, runs=runs,
+        magi_status=magi_status, readiness=readiness, judges_ok=judges_ok,
     )
 
 
@@ -171,3 +179,96 @@ def delete_study(study_id: int):
         model.delete(study_id)
         flash(f'Study "{study["name"]}" deleted.', "success")
     return redirect(url_for("study.list_studies"))
+
+
+@study_bp.route("/<int:study_id>/regen-magi", methods=["POST"])
+def regen_magi(study_id: int):
+    model = _get_model()
+    study = model.get_by_id(study_id)
+    if not study:
+        flash("Study not found.", "error")
+        return redirect(url_for("study.list_studies"))
+
+    db = current_app.config["DB"]
+    em = ExperimentModel(db)
+    tm = TranslationModel(db)
+    ssm = SelectionScoreModel(db)
+    stm = SettingsModel(db)
+    qm = QueueModel(db)
+
+    # Determine which prompts to regenerate
+    selected_ids = request.form.getlist("prompt_ids", type=int)
+    all_prompts = PromptModel(db).get_by_study(study_id)
+    if selected_ids:
+        prompts = [p for p in all_prompts if p["id"] in set(selected_ids)]
+    else:
+        prompts = all_prompts
+
+    if not prompts:
+        flash("No prompts to regenerate.", "warning")
+        return redirect(url_for("study.detail_study", study_id=study_id))
+
+    # Check judge panel
+    settings = stm.get_all()
+    judge_id_vals = [
+        settings.get("magi_judge_balthasar_id"),
+        settings.get("magi_judge_caspar_id"),
+        settings.get("magi_judge_melchior_id"),
+    ]
+    judge_models = []
+    if all(judge_id_vals):
+        judge_models = [em.get_model_by_id(int(jid)) for jid in judge_id_vals]
+        judge_models = [m for m in judge_models if m]
+
+    # Create a dedicated repair run
+    run_id = em.create_run(study_id, "[MAGI repair]")
+    em.update_run_status(run_id, RUN_QUEUED)
+
+    phase1_count = 0
+    phase2_count = 0
+    phase2_skipped = False
+
+    for prompt in prompts:
+        approved = tm.get_approved_by_prompt(prompt["id"])
+        scored = [c for c in approved if c.get("sfs") is not None]
+        if not scored:
+            continue
+        pei = em.get_latest_pei_for_prompt(prompt["id"]) or 0.0
+        for c in scored:
+            c["id"] = c["candidate_id"]
+            c["pei"] = pei
+        result = _scorer.compute_selection_scores(scored)
+        ssm.upsert_scores(result)
+        phase1_count += len(result)
+
+        flagged = [c for c in result if c.get("magi_required")]
+        if flagged:
+            if len(judge_models) == 3:
+                for c in flagged:
+                    qm.enqueue(
+                        run_id=run_id,
+                        operation_type="magi_phase2",
+                        item_key=f"magi:c{c['id']}",
+                        payload={
+                            "run_id":           run_id,
+                            "prompt_id":        prompt["id"],
+                            "candidate_id":     c["id"],
+                            "base_text":        prompt["base_text"],
+                            "translation_text": c.get("text", ""),
+                            "language_name":    c.get("language_name", ""),
+                            "sfs":              c.get("sfs") or 0.0,
+                            "ler_char":         c.get("ler_char") or 1.0,
+                        },
+                        priority=1,
+                    )
+                    phase2_count += 1
+            else:
+                phase2_skipped = True
+
+    flash(f"MAGI Phase 1 ricalcolato per {phase1_count} candidati.", "info")
+    if phase2_count:
+        flash(f"{phase2_count} candidati MAGI Phase 2 accodati (run #{run_id}).", "info")
+    if phase2_skipped:
+        flash("MAGI Judge Panel non configurato — Phase 2 saltata. Configura i tre judge in Settings.", "warning")
+
+    return redirect(url_for("study.detail_study", study_id=study_id))

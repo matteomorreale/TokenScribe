@@ -137,6 +137,70 @@
   {% endif %}
 </div>
 
+<!-- MAGI Regeneration Panel -->
+{% if prompts %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Regenerate MAGI Scores</span>
+  </div>
+  {% if not judges_ok %}
+  <div style="background:rgba(249,199,79,.06); border:1px solid rgba(249,199,79,.3); border-radius:6px; padding:.6rem .85rem; margin-bottom:.85rem; font-size:.8rem; color:var(--ts-warning);">
+    ⚠ MAGI Judge Panel non configurato — Phase 2 verrà saltata.
+    <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning); text-decoration:underline;">Configura in Settings →</a>
+  </div>
+  {% endif %}
+  <form method="post" action="{{ url_for('study.regen_magi', study_id=study.id) }}">
+    <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.75rem;">
+      Select prompts to regenerate (leave all unchecked to regenerate all). Phase 1 runs synchronously; Phase 2 judge calls are queued in a new repair run.
+    </p>
+    <div class="ts-table-wrap" style="margin-bottom:.85rem;">
+      <table class="ts-table" style="font-size:.78rem;">
+        <thead>
+          <tr>
+            <th style="width:2rem;"><input type="checkbox" id="magi-select-all" title="Select all"></th>
+            <th>#</th>
+            <th>Base Text</th>
+            <th style="text-align:center;">Appr.</th>
+            <th style="text-align:center;">SFS</th>
+            <th style="text-align:center;">MAGI P1</th>
+            <th style="text-align:center;">P2 Needed</th>
+            <th style="text-align:center;">P2 Done</th>
+            <th style="text-align:center;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in prompts %}
+          {% set r = readiness.get(p.id, {}) %}
+          {% set s = r.get('status', 'red') %}
+          <tr>
+            <td><input type="checkbox" name="prompt_ids" value="{{ p.id }}" class="magi-prompt-cb"></td>
+            <td style="color:var(--ts-text-muted);">{{ p.id }}</td>
+            <td style="font-family:var(--ts-mono); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              <a href="{{ url_for('prompt.detail_prompt', prompt_id=p.id) }}" style="color:inherit;">{{ p.base_text[:70] ~ '…' if p.base_text|length > 70 else p.base_text }}</a>
+            </td>
+            <td style="text-align:center;">{{ r.get('approved_count', 0) }}</td>
+            <td style="text-align:center;">{{ r.get('scored_count', 0) }}</td>
+            <td style="text-align:center;">{{ r.get('magi_count', 0) }}</td>
+            <td style="text-align:center;">{{ r.get('magi_required_count', 0) }}</td>
+            <td style="text-align:center;">{{ r.get('judge_count', 0) }}</td>
+            <td style="text-align:center;">
+              {% if s == 'green' %}<span class="ts-badge ts-badge-approved">OK</span>
+              {% elif s == 'yellow' %}<span class="ts-badge ts-badge-warning">Partial</span>
+              {% else %}<span class="ts-badge ts-badge-rejected">Missing</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex; gap:.75rem; align-items:center;">
+      <button type="submit" class="ts-btn ts-btn-primary" data-loading="Regenerating…">Regenerate Selected</button>
+      <button type="submit" class="ts-btn ts-btn-secondary" onclick="document.querySelectorAll('.magi-prompt-cb').forEach(cb=>cb.checked=false);" formnovalidate>Regenerate All</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
 <!-- Actions -->
 <div style="display:flex; gap:.75rem; flex-wrap:wrap;">
   <a href="{{ url_for('prompt.list_prompts', study_id=study.id) }}" class="ts-btn ts-btn-secondary">Manage Prompts</a>
@@ -146,4 +210,10 @@
     <button type="submit" class="ts-btn ts-btn-danger">Delete Study</button>
   </form>
 </div>
+
+<script>
+document.getElementById('magi-select-all')?.addEventListener('change', function() {
+  document.querySelectorAll('.magi-prompt-cb').forEach(cb => cb.checked = this.checked);
+});
+</script>
 {% endblock %}

@@ -49,6 +49,7 @@ class DatabaseManager:
             conn.close()
 
     def _migrate_schema(self, conn: sqlite3.Connection):
+
         try:
             cur = conn.execute("PRAGMA table_info(token_results)")
             columns = [row[1] for row in cur.fetchall()]
@@ -178,6 +179,22 @@ class DatabaseManager:
                        WHERE cost_per_input_token > 0 OR cost_per_output_token > 0"""
                 )
                 conn.execute("INSERT INTO settings (key, value) VALUES ('pricing_unit', 'per_million')")
+        except sqlite3.Error:
+            pass
+
+        # Add repetition_index to token_results and replace 4-col unique index with 5-col
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "repetition_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN repetition_index INTEGER NOT NULL DEFAULT 0"
+                )
+            conn.execute("DROP INDEX IF EXISTS idx_tr_uniq_rplm")
+            conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_tr_uniq_rplm_rep
+                   ON token_results(run_id, prompt_id, language_id, model_id, repetition_index)"""
+            )
         except sqlite3.Error:
             pass
 
@@ -312,20 +329,21 @@ class DatabaseManager:
             );
 
             CREATE TABLE IF NOT EXISTS token_results (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id        INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
-                prompt_id     INTEGER NOT NULL REFERENCES prompts(id),
-                language_id   INTEGER NOT NULL REFERENCES languages(id),
-                model_id      INTEGER NOT NULL REFERENCES models(id),
-                input_tokens  INTEGER NOT NULL DEFAULT 0,
-                output_tokens INTEGER NOT NULL DEFAULT 0,
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id              INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                prompt_id           INTEGER NOT NULL REFERENCES prompts(id),
+                language_id         INTEGER NOT NULL REFERENCES languages(id),
+                model_id            INTEGER NOT NULL REFERENCES models(id),
+                repetition_index    INTEGER NOT NULL DEFAULT 0,
+                input_tokens        INTEGER NOT NULL DEFAULT 0,
+                output_tokens       INTEGER NOT NULL DEFAULT 0,
                 visible_output_text_length INTEGER,
                 api_reported_output_tokens INTEGER,
-                cost          REAL NOT NULL DEFAULT 0.0,
-                source        TEXT NOT NULL DEFAULT 'api_reported' CHECK(source IN ('api_reported','estimated')),
+                cost                REAL NOT NULL DEFAULT 0.0,
+                source              TEXT NOT NULL DEFAULT 'api_reported' CHECK(source IN ('api_reported','estimated')),
                 token_accounting_mode TEXT,
-                response_text TEXT,
-                created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+                response_text       TEXT,
+                created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
             );
 
             CREATE TABLE IF NOT EXISTS pei_results (
