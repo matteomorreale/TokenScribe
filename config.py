@@ -71,8 +71,6 @@ class TokenScribeConfig:
             {"name": "gemini-2.5-pro",        "context_window": 1000000, "is_reasoning": True,  "cost_per_input_token": 1.25,  "cost_per_output_token": 10.0},
             {"name": "gemini-2.5-flash",      "context_window": 1000000, "is_reasoning": True,  "cost_per_input_token": 0.3,   "cost_per_output_token": 2.5},
             {"name": "gemini-2.5-flash-lite", "context_window": 1000000, "is_reasoning": False, "cost_per_input_token": 0.1,   "cost_per_output_token": 0.4},
-            # --- estimated (*) ---
-            {"name": "gemini-3.1-pro",        "context_window": 1000000, "is_reasoning": True,  "cost_per_input_token": 2.5,   "cost_per_output_token": 15.0},
         ],
         "deepseek": [
             # --- confirmed (api-docs.deepseek.com/quick_start/pricing) ---

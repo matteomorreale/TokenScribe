@@ -24,7 +24,7 @@ class ExperimentModel:
         try:
             rows = conn.execute(
                 """SELECT er.*, s.name as study_name,
-                          COUNT(tr.id) as result_count
+                          COUNT(CASE WHEN tr.attempt_status = 'success' THEN 1 END) as result_count
                    FROM experiment_runs er
                    JOIN studies s ON s.id = er.study_id
                    LEFT JOIN token_results tr ON tr.run_id = er.id
@@ -39,7 +39,8 @@ class ExperimentModel:
         conn = self.db.get_connection()
         try:
             rows = conn.execute(
-                """SELECT er.*, COUNT(tr.id) as result_count
+                """SELECT er.*,
+                          COUNT(CASE WHEN tr.attempt_status = 'success' THEN 1 END) as result_count
                    FROM experiment_runs er
                    LEFT JOIN token_results tr ON tr.run_id = er.id
                    WHERE er.study_id=?
@@ -106,12 +107,7 @@ class ExperimentModel:
         model_id: int,
         repetition_index: int = 0,
     ) -> None:
-        """Delete the token_results row for this (run, prompt, language, model, repetition) key.
-
-        Called unconditionally before every insert so that retries and fallback
-        calls produce exactly one row per key, regardless of whether the previous
-        attempt succeeded or failed.
-        """
+        """Delete all attempt rows for this (run, prompt, language, model, repetition) key."""
         conn = self.db.get_connection()
         try:
             conn.execute(
@@ -163,7 +159,10 @@ class ExperimentModel:
         visible_output_tokens: int = None,
         response_valid: bool = None,
         repetition_index: int = 0,
+        attempt_status: str = "success",
     ) -> int:
+        """Insert a token result row. attempt_index is computed atomically via a
+        MAX+1 subquery so that concurrent retries never collide on the unique key."""
         conn = self.db.get_connection()
         try:
             if visible_output_text_length is None:
@@ -172,7 +171,6 @@ class ExperimentModel:
                 token_accounting_mode = source
             if api_reported_output_tokens is None and source == "api_reported":
                 api_reported_output_tokens = output_tokens
-            # visible_output_tokens supersedes normalized_output_tokens
             vot = visible_output_tokens if visible_output_tokens is not None else normalized_output_tokens
             if response_valid is None:
                 rv = 1 if (response_text or "").strip() and (vot is None or vot > 0) else 0
@@ -186,13 +184,26 @@ class ExperimentModel:
                     visible_output_text_length, api_reported_output_tokens,
                     cost, source, token_accounting_mode, response_text,
                     normalized_output_tokens, visible_output_tokens, response_valid,
-                    repetition_index)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    repetition_index, attempt_index, attempt_status)
+                   SELECT ?, ?, ?, ?,
+                          ?, ?,
+                          ?, ?,
+                          ?, ?, ?, ?,
+                          ?, ?, ?,
+                          ?,
+                          COALESCE((SELECT MAX(t2.attempt_index) + 1
+                                    FROM token_results t2
+                                    WHERE t2.run_id=? AND t2.prompt_id=? AND t2.language_id=?
+                                      AND t2.model_id=? AND t2.repetition_index=?), 0),
+                          ?""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
                  cost, source, token_accounting_mode, response_text,
-                 vot, vot, rv, repetition_index),
+                 vot, vot, rv,
+                 repetition_index,
+                 run_id, prompt_id, language_id, model_id, repetition_index,
+                 attempt_status),
             )
             conn.commit()
             return cur.lastrowid
@@ -203,12 +214,22 @@ class ExperimentModel:
         conn = self.db.get_connection()
         try:
             rows = conn.execute(
-                """SELECT
+                """WITH latest_success AS (
+                       SELECT run_id, prompt_id, language_id, model_id, repetition_index,
+                              MAX(attempt_index) AS max_attempt
+                       FROM token_results
+                       WHERE run_id = ? AND attempt_status = 'success'
+                       GROUP BY run_id, prompt_id, language_id, model_id, repetition_index
+                   )
+                   SELECT
                           tr.id,
                           tr.run_id,
                           tr.prompt_id,
                           tr.language_id,
                           tr.model_id,
+                          tr.repetition_index,
+                          tr.attempt_index,
+                          tr.attempt_status,
                           tr.input_tokens,
                           tr.output_tokens,
                           COALESCE(tr.visible_output_text_length, LENGTH(COALESCE(tr.response_text, ''))) AS visible_output_text_length,
@@ -234,12 +255,18 @@ class ExperimentModel:
                           m.is_reasoning as is_reasoning_capable,
                           pr.name as provider_name
                    FROM token_results tr
+                   JOIN latest_success ls
+                        ON ls.run_id = tr.run_id
+                       AND ls.prompt_id = tr.prompt_id
+                       AND ls.language_id = tr.language_id
+                       AND ls.model_id = tr.model_id
+                       AND ls.repetition_index = tr.repetition_index
+                       AND ls.max_attempt = tr.attempt_index
                    JOIN prompts p ON p.id = tr.prompt_id
                    JOIN languages l ON l.id = tr.language_id
                    JOIN writing_systems ws ON ws.id = l.writing_system_id
                    JOIN models m ON m.id = tr.model_id
                    JOIN providers pr ON pr.id = m.provider_id
-                   WHERE tr.run_id=?
                    ORDER BY p.id, l.name, m.name""",
                 (run_id,),
             ).fetchall()
@@ -573,7 +600,7 @@ class ExperimentModel:
                    JOIN models m ON m.id = tr.model_id
                    JOIN prompts p ON p.id = tr.prompt_id
                    JOIN languages l ON l.id = tr.language_id
-                   WHERE tr.run_id=? AND tr.model_id=?""",
+                   WHERE tr.run_id=? AND tr.model_id=? AND tr.attempt_status='success'""",
                 (run_id, model_id),
             ).fetchall()
             results = [dict(r) for r in rows]
@@ -639,7 +666,8 @@ class ExperimentModel:
             study_id = int(run_row["study_id"]) if run_row else None
 
             result_rows = conn.execute(
-                "SELECT DISTINCT prompt_id, language_id FROM token_results WHERE run_id=? AND model_id=?",
+                """SELECT DISTINCT prompt_id, language_id FROM token_results
+                   WHERE run_id=? AND model_id=? AND attempt_status='success'""",
                 (run_id, model_id),
             ).fetchall()
 
@@ -718,7 +746,7 @@ class ExperimentModel:
                    JOIN languages l ON l.id = snap.language_id
                    JOIN prompts p ON p.id = snap.prompt_id
                    LEFT JOIN selection_score_results ssr ON ssr.candidate_id = snap.candidate_id
-                   WHERE tr.run_id = ?
+                   WHERE tr.run_id = ? AND tr.attempt_status = 'success'
                    ORDER BY snap.prompt_id, l.name""",
                 (run_id,),
             ).fetchall()

@@ -25,6 +25,7 @@
 
 {% set run_status = run.status or 'completed' %}
 {% set is_active = run_status in ('queued', 'running') %}
+{% set is_stopped = run_status == 'stopped' %}
 {% set has_errors = run_status in ('partial', 'failed') %}
 
 {# ── Queue Progress Panel ─────────────────────────────────────── #}
@@ -43,6 +44,8 @@
         <span class="ts-badge" style="background:var(--ts-warning,#f59e0b);color:#000;">partial</span>
       {% elif run_status == 'failed' %}
         <span class="ts-badge ts-badge-rejected">failed</span>
+      {% elif run_status == 'stopped' %}
+        <span class="ts-badge" style="background:var(--ts-text-muted,#888);color:#fff;">stopped</span>
       {% endif %}
     </span>
     <span id="ts-progress-text" style="font-size:.82rem; color:var(--ts-text-muted);">
@@ -50,7 +53,13 @@
       {% if progress.error > 0 %} — <span style="color:var(--ts-danger,#ef4444);">{{ progress.error }} errori</span>{% endif %}
     </span>
     {% if is_active %}
-    <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:auto;">aggiornamento live ogni 3s</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">aggiornamento live ogni 3s</span>
+    <form method="post" action="{{ url_for('run.stop_run', run_id=run.id) }}" style="margin-left:auto;">
+      <button type="submit" class="ts-btn ts-btn-sm ts-btn-danger"
+              onclick="return confirm('Fermare la run #{{ run.id }}? Le operazioni in corso termineranno, quelle in attesa verranno annullate.')">
+        ⏹ Stop
+      </button>
+    </form>
     {% endif %}
   </div>
 
@@ -108,6 +117,18 @@
       <button class="ts-btn ts-btn-sm" style="border-color:var(--ts-warning,#f59e0b); color:var(--ts-warning,#f59e0b);">
         Revalida status
       </button>
+    </form>
+  </div>
+  {% endif %}
+
+  {# Azioni restart (run fermata) #}
+  {% if is_stopped %}
+  <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; border-top:1px solid var(--ts-border); background:rgba(136,136,136,.06);">
+    <span style="font-size:.85rem; color:var(--ts-text-muted);">
+      Run fermata manualmente — {{ progress.cancelled }} operazioni annullate, {{ progress.done }} completate.
+    </span>
+    <form method="post" action="{{ url_for('run.restart_run', run_id=run.id) }}" style="margin-left:auto;">
+      <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">▶ Riavvia run</button>
     </form>
   </div>
   {% endif %}
@@ -435,10 +456,15 @@
     queued:    'ts-badge-pending',
     partial:   '',
     failed:    'ts-badge-rejected',
+    stopped:   '',
+  };
+  const BADGE_STYLES = {
+    partial: 'background:var(--ts-warning,#f59e0b);color:#000;',
+    stopped: 'background:var(--ts-text-muted,#888);color:#fff;',
   };
   const BADGE_LABELS = {
     completed: 'completed', running: 'running', queued: 'queued',
-    partial: 'partial', failed: 'failed',
+    partial: 'partial', failed: 'failed', stopped: 'stopped',
   };
   const ITEM_BADGE = {
     done:    '<span class="ts-badge ts-badge-approved">done</span>',
@@ -464,10 +490,10 @@
       const badge  = document.getElementById('ts-run-badge');
       const runSt  = data.run_status || 'unknown';
       if (badge) {
-        const cls  = BADGE_CLASSES[runSt] || 'ts-badge-pending';
-        const lbl  = BADGE_LABELS[runSt] || runSt;
-        const extra = runSt === 'partial' ? ' style="background:var(--ts-warning,#f59e0b);color:#000;"' : '';
-        badge.innerHTML = `<span class="ts-badge ${cls}"${extra}>${lbl}</span>`;
+        const cls   = BADGE_CLASSES[runSt] || 'ts-badge-pending';
+        const lbl   = BADGE_LABELS[runSt] || runSt;
+        const style = BADGE_STYLES[runSt] ? ` style="${BADGE_STYLES[runSt]}"` : '';
+        badge.innerHTML = `<span class="ts-badge ${cls}"${style}>${lbl}</span>`;
       }
 
       // Aggiorna testo avanzamento

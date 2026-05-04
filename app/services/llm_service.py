@@ -28,6 +28,19 @@ def _is_model_not_found(error_str: str) -> bool:
     )
 
 
+def _is_rate_limited(error_str: str) -> bool:
+    s = error_str.lower()
+    return (
+        "429" in s
+        or "rate limit" in s
+        or "rate_limit" in s
+        or "rate_limited" in s
+        or "too many requests" in s
+        or "quota exceeded" in s
+        or "resource_exhausted" in s
+    )
+
+
 @dataclass
 class TokenScribeCallResult:
     """Result of a single LLM API call."""
@@ -40,6 +53,7 @@ class TokenScribeCallResult:
     error: Optional[str] = None
     success: bool = True
     model_not_found: bool = False
+    rate_limited: bool = False
 
 
 class LLMService:
@@ -213,7 +227,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
 
     # ------------------------------------------------------------------
     # Anthropic
@@ -239,7 +253,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
 
     # ------------------------------------------------------------------
     # Google Gemini
@@ -280,7 +294,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
 
     # ------------------------------------------------------------------
     # DeepSeek (OpenAI-compatible API)
@@ -331,7 +345,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
 
     # ------------------------------------------------------------------
     # Meta Llama (via Together AI consumer API)
@@ -361,7 +375,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
 
     # ------------------------------------------------------------------
     # Qwen (via Alibaba Cloud DashScope — OpenAI-compatible)
@@ -397,7 +411,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
 
     # ------------------------------------------------------------------
     # Mistral
@@ -424,4 +438,4 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))

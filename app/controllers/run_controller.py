@@ -9,7 +9,8 @@ from flask import Blueprint, current_app, jsonify, request, redirect, url_for, f
 
 from app.models import ExperimentModel
 from app.models.queue_model import (
-    QueueModel, RUN_QUEUED, ITEM_PENDING, ITEM_ERROR, ITEM_TIMEOUT, RUN_PARTIAL, RUN_COMPLETED,
+    QueueModel, RUN_QUEUED, RUN_STOPPED,
+    ITEM_PENDING, ITEM_ERROR, ITEM_TIMEOUT, RUN_PARTIAL, RUN_COMPLETED,
 )
 
 run_bp = Blueprint("run", __name__)
@@ -78,6 +79,48 @@ def queue_status(run_id: int):
             for it in items
         ],
     })
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/stop  →  cancella tutti gli item pending, marca stopped
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/stop", methods=["POST"])
+def stop_run(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    qm         = _qm()
+    cancelled_n = qm.cancel_pending_items(run_id)
+    qm.update_run_status(run_id, RUN_STOPPED)
+    flash(f"Run #{run_id} fermata — {cancelled_n} operazioni annullate.", "info")
+
+    next_url = request.form.get("next") or url_for("experiment.detail_experiment", run_id=run_id)
+    return redirect(next_url)
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/restart  →  rimette in pending i cancelled/error, riavvia
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/restart", methods=["POST"])
+def restart_run(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    qm      = _qm()
+    reset_n = qm.restart_stopped_run(run_id)
+    if reset_n > 0:
+        qm.update_run_status(run_id, RUN_QUEUED)
+        flash(f"Run #{run_id} riavviata — {reset_n} operazioni riaccodate.", "success")
+    else:
+        flash("Nessuna operazione da riavviare.", "info")
+
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
 
 
 # ------------------------------------------------------------------

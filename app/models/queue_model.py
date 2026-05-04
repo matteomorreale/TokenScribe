@@ -17,6 +17,7 @@ ITEM_RUNNING   = "running"
 ITEM_DONE      = "done"
 ITEM_ERROR     = "error"
 ITEM_TIMEOUT   = "timeout"
+ITEM_CANCELLED = "cancelled"
 
 # Stati validi per una RUN
 RUN_QUEUED    = "queued"
@@ -24,6 +25,7 @@ RUN_RUNNING   = "running"
 RUN_COMPLETED = "completed"
 RUN_PARTIAL   = "partial"    # completata ma con errori
 RUN_FAILED    = "failed"     # errore critico
+RUN_STOPPED   = "stopped"    # fermata manualmente dall'utente
 
 
 class QueueModel:
@@ -105,6 +107,42 @@ class QueueModel:
         finally:
             conn.close()
 
+    def requeue_at_end(self, item_id: int, max_retries: int = 10) -> bool:
+        """
+        Rimette un item in coda alla fine (nuovo id auto-increment) anziché marcarlo in errore.
+        Usato per i rate-limit 429: l'item viene rielaborato dopo tutti i pending correnti.
+        Ritorna True se rimesso in coda, False se ha superato max_retries → marcato come errore.
+        """
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute("SELECT * FROM run_queue WHERE id = ?", (item_id,)).fetchone()
+            if not row:
+                return False
+            retry_count = (row["retry_count"] or 0) + 1
+            if retry_count > max_retries:
+                conn.execute(
+                    """UPDATE run_queue
+                       SET status = ?, completed_at = ?, error_message = ?,
+                           retry_count = ?
+                       WHERE id = ?""",
+                    (ITEM_ERROR, _now_iso(), "rate_limit: max retries exceeded", retry_count, item_id),
+                )
+                conn.commit()
+                return False
+            # Cancella e re-inserisce con nuovo id auto-increment → finisce in fondo alla coda
+            conn.execute("DELETE FROM run_queue WHERE id = ?", (item_id,))
+            conn.execute(
+                """INSERT INTO run_queue
+                   (run_id, operation_type, item_key, payload, status, priority, retry_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (row["run_id"], row["operation_type"], row["item_key"],
+                 row["payload"], ITEM_PENDING, row["priority"], retry_count),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
     def mark_error(self, item_id: int, message: str) -> None:
         conn = self.db.get_connection()
         try:
@@ -166,18 +204,21 @@ class QueueModel:
                 (run_id,),
             ).fetchall()
             counts = {r["status"]: r["cnt"] for r in rows}
-            total = sum(counts.values())
-            done  = counts.get(ITEM_DONE, 0)
-            error = counts.get(ITEM_ERROR, 0) + counts.get(ITEM_TIMEOUT, 0)
-            pending  = counts.get(ITEM_PENDING, 0)
-            running  = counts.get(ITEM_RUNNING, 0)
+            total     = sum(counts.values())
+            done      = counts.get(ITEM_DONE, 0)
+            error     = counts.get(ITEM_ERROR, 0) + counts.get(ITEM_TIMEOUT, 0)
+            pending   = counts.get(ITEM_PENDING, 0)
+            running   = counts.get(ITEM_RUNNING, 0)
+            cancelled = counts.get(ITEM_CANCELLED, 0)
+            active    = total - cancelled
             return {
-                "total":   total,
-                "done":    done,
-                "error":   error,
-                "pending": pending,
-                "running": running,
-                "pct":     round(done / total * 100, 1) if total else 0,
+                "total":     total,
+                "done":      done,
+                "error":     error,
+                "pending":   pending,
+                "running":   running,
+                "cancelled": cancelled,
+                "pct":       round(done / active * 100, 1) if active else 0,
             }
         finally:
             conn.close()
@@ -251,6 +292,34 @@ class QueueModel:
             )
             conn.commit()
             return len(ids_to_reset)
+        finally:
+            conn.close()
+
+    def cancel_pending_items(self, run_id: int) -> int:
+        """Marca come 'cancelled' tutti gli item pending di una run (stop manuale)."""
+        conn = self.db.get_connection()
+        try:
+            cur = conn.execute(
+                "UPDATE run_queue SET status = ? WHERE run_id = ? AND status = ?",
+                (ITEM_CANCELLED, run_id, ITEM_PENDING),
+            )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
+    def restart_stopped_run(self, run_id: int) -> int:
+        """Reset cancelled/error/timeout/running items a 'pending' per riavviare una run fermata."""
+        conn = self.db.get_connection()
+        try:
+            cur = conn.execute(
+                """UPDATE run_queue
+                   SET status = ?, started_at = NULL, completed_at = NULL, error_message = NULL
+                   WHERE run_id = ? AND status IN (?, ?, ?, ?)""",
+                (ITEM_PENDING, run_id, ITEM_CANCELLED, ITEM_ERROR, ITEM_TIMEOUT, ITEM_RUNNING),
+            )
+            conn.commit()
+            return cur.rowcount
         finally:
             conn.close()
 
@@ -429,6 +498,8 @@ class QueueModel:
         progress = self.get_run_progress(run_id)
         if progress["total"] == 0:
             status = RUN_COMPLETED
+        elif progress["cancelled"] > 0 and progress["pending"] == 0 and progress["running"] == 0:
+            status = RUN_STOPPED
         elif progress["pending"] > 0 or progress["running"] > 0:
             status = RUN_RUNNING
         elif progress["error"] > 0 and progress["done"] == 0:
@@ -436,7 +507,7 @@ class QueueModel:
         elif progress["error"] > 0:
             status = RUN_PARTIAL
         else:
-            # Tutti gli item sono DONE — verifica se qualche risposta LLM era vuota/invalida
+            # Tutti gli item attivi sono DONE — verifica se qualche risposta LLM era vuota/invalida
             if self._count_invalid_token_results(run_id) > 0:
                 status = RUN_PARTIAL
             else:

@@ -181,6 +181,29 @@ def delete_study(study_id: int):
     return redirect(url_for("study.list_studies"))
 
 
+@study_bp.route("/<int:study_id>/magi-repair-status")
+def magi_repair_status(study_id: int):
+    """JSON: progress of the most recent active MAGI repair run for this study."""
+    from flask import jsonify
+    db = current_app.config["DB"]
+    conn = db.get_connection()
+    try:
+        row = conn.execute(
+            """SELECT id, status FROM experiment_runs
+               WHERE study_id = ? AND status IN ('queued', 'running') AND notes = '[MAGI repair]'
+               ORDER BY id DESC LIMIT 1""",
+            (study_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return jsonify({"active": False})
+    run_id = row["id"]
+    run_status = row["status"]
+    progress = QueueModel(db).get_run_progress(run_id)
+    return jsonify({"active": True, "run_id": run_id, "run_status": run_status, "progress": progress})
+
+
 @study_bp.route("/<int:study_id>/regen-magi", methods=["POST"])
 def regen_magi(study_id: int):
     model = _get_model()

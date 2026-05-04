@@ -182,6 +182,40 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        # Expand run_queue.status CHECK to include 'cancelled' (table recreation required in SQLite)
+        try:
+            rq_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='run_queue'"
+            ).fetchone()
+            if rq_row and "'cancelled'" not in (rq_row[0] or ""):
+                conn.execute("PRAGMA foreign_keys = OFF")
+                conn.executescript("""
+                    CREATE TABLE run_queue_v2 (
+                        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id         INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                        operation_type TEXT NOT NULL,
+                        item_key       TEXT NOT NULL,
+                        payload        TEXT NOT NULL DEFAULT '{}',
+                        status         TEXT NOT NULL DEFAULT 'pending'
+                                       CHECK(status IN ('pending','running','done','error','timeout','cancelled')),
+                        priority       INTEGER NOT NULL DEFAULT 0,
+                        created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                        started_at     TEXT,
+                        completed_at   TEXT,
+                        error_message  TEXT,
+                        retry_count    INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE(run_id, operation_type, item_key)
+                    );
+                    INSERT INTO run_queue_v2 SELECT * FROM run_queue;
+                    DROP TABLE run_queue;
+                    ALTER TABLE run_queue_v2 RENAME TO run_queue;
+                    CREATE INDEX IF NOT EXISTS idx_runq_run_id ON run_queue(run_id);
+                    CREATE INDEX IF NOT EXISTS idx_runq_status ON run_queue(status, priority, id);
+                """)
+                conn.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error:
+            pass
+
         # Add repetition_index to token_results and replace 4-col unique index with 5-col
         try:
             cur = conn.execute("PRAGMA table_info(token_results)")
@@ -194,6 +228,28 @@ class DatabaseManager:
             conn.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_tr_uniq_rplm_rep
                    ON token_results(run_id, prompt_id, language_id, model_id, repetition_index)"""
+            )
+        except sqlite3.Error:
+            pass
+
+        # Add attempt_index + attempt_status; replace 5-col unique index with 6-col so that
+        # every retry attempt gets its own row instead of overwriting the previous one.
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "attempt_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN attempt_index INTEGER NOT NULL DEFAULT 0"
+                )
+            if "attempt_status" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN attempt_status TEXT NOT NULL DEFAULT 'success'"
+                )
+            # Widen the unique index to include attempt_index — drop both old variants first.
+            conn.execute("DROP INDEX IF EXISTS idx_tr_uniq_rplm_rep")
+            conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_tr_uniq_rplm_rep_att
+                   ON token_results(run_id, prompt_id, language_id, model_id, repetition_index, attempt_index)"""
             )
         except sqlite3.Error:
             pass
@@ -449,7 +505,7 @@ class DatabaseManager:
                 item_key       TEXT NOT NULL,
                 payload        TEXT NOT NULL DEFAULT '{}',
                 status         TEXT NOT NULL DEFAULT 'pending'
-                               CHECK(status IN ('pending','running','done','error','timeout')),
+                               CHECK(status IN ('pending','running','done','error','timeout','cancelled')),
                 priority       INTEGER NOT NULL DEFAULT 0,
                 created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
                 started_at     TEXT,

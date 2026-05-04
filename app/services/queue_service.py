@@ -20,6 +20,10 @@ from app.models.selection_score_model import SelectionScoreModel
 
 logger = logging.getLogger(__name__)
 
+
+class RateLimitError(Exception):
+    """Sollevato quando un provider risponde 429 — l'item va rimesso in fondo alla coda."""
+
 _PROVIDER_KEY_MAP = {
     "openai":    "openai_api_key",
     "anthropic": "anthropic_api_key",
@@ -108,6 +112,30 @@ class QueueService:
                                 message=f"Item {item_id} op={op_type} run={run_id} timed out after {timeout}s",
                                 context_ref={"run_id": run_id, "item_id": item_id},
                             )
+                    except RateLimitError as exc:
+                        requeued = qm.requeue_at_end(item_id)
+                        if requeued:
+                            logger.warning(
+                                "Queue: item %d RATE LIMITED (op=%s run=%d) — rimesso in coda: %s",
+                                item_id, op_type, run_id, exc,
+                            )
+                            if self._log:
+                                self._log.error(
+                                    "queue", "rate_limit",
+                                    message=f"Item {item_id} op={op_type} run={run_id} rate limited, requeued: {exc}",
+                                    context_ref={"run_id": run_id, "item_id": item_id},
+                                )
+                        else:
+                            logger.error(
+                                "Queue: item %d RATE LIMITED max retries exceeded (op=%s run=%d)",
+                                item_id, op_type, run_id,
+                            )
+                            if self._log:
+                                self._log.error(
+                                    "queue", "rate_limit_failed",
+                                    message=f"Item {item_id} op={op_type} run={run_id} rate limited, max retries exceeded",
+                                    context_ref={"run_id": run_id, "item_id": item_id},
+                                )
                     except Exception as exc:
                         qm.mark_error(item_id, str(exc))
                         logger.exception("Queue: item %d ERROR: %s", item_id, exc)
@@ -266,6 +294,8 @@ class QueueService:
             "language": payload.get("language_name", ""),
             "language_code": payload.get("language_code", ""),
         }
+        repetition_index = int(payload.get("repetition_index", 0))
+
         result = llm.call(
             provider=payload["provider"],
             model_name=payload["model_name"],
@@ -275,6 +305,9 @@ class QueueService:
             is_reasoning=is_reasoning,
             _ctx=llm_ctx,
         )
+        if not result.success and result.rate_limited:
+            raise RateLimitError(result.error)
+
         if not result.success and result.model_not_found:
             fallback = self._get_fallback_model(payload["provider"], model_id, payload["model_name"])
             if fallback:
@@ -293,15 +326,29 @@ class QueueService:
                 )
                 if result.success:
                     model_id = fallback["id"]
-        if not result.success:
-            raise RuntimeError(f"LLM call failed: {result.error}")
+                elif result.rate_limited:
+                    raise RateLimitError(result.error)
 
-        repetition_index = int(payload.get("repetition_index", 0))
+        # model_id is now final (possibly updated to fallback). attempt_index is
+        # computed atomically inside insert_token_result via a MAX+1 subquery.
+        if not result.success:
+            em.insert_token_result(
+                run_id=run_id,
+                prompt_id=prompt_id,
+                language_id=language_id,
+                model_id=model_id,
+                input_tokens=0,
+                output_tokens=0,
+                cost=0.0,
+                response_text=result.error,
+                response_valid=False,
+                repetition_index=repetition_index,
+                attempt_status="failed",
+            )
+            raise RuntimeError(f"LLM call failed: {result.error}")
 
         visible_output_tokens = result.output_tokens - result.reasoning_tokens
         is_valid = bool((result.response_text or "").strip()) and visible_output_tokens > 0
-
-        em.delete_token_result(run_id, prompt_id, language_id, model_id, repetition_index)
 
         em.insert_token_result(
             run_id=run_id,
@@ -316,6 +363,7 @@ class QueueService:
             visible_output_tokens=visible_output_tokens,
             response_valid=is_valid,
             repetition_index=repetition_index,
+            attempt_status="success" if is_valid else "failed",
         )
 
         if not is_valid:

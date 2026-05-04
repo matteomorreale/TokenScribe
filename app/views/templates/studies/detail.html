@@ -137,6 +137,29 @@
   {% endif %}
 </div>
 
+<!-- MAGI Repair Progress (shown when a repair run is active) -->
+<div id="magi-repair-card" class="ts-card" style="display:none; margin-bottom:1.25rem;">
+  <div class="ts-card-header" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <span class="ts-card-title">MAGI Repair in corso</span>
+    <span id="magi-repair-badge"></span>
+    <span id="magi-repair-run-label" style="font-size:.8rem; color:var(--ts-text-muted);"></span>
+    <span id="magi-repair-progress-text" style="font-size:.82rem; color:var(--ts-text-muted);"></span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">aggiornamento live ogni 3s</span>
+    <form id="magi-stop-form" method="post" action="#" style="margin-left:auto; display:none;">
+      <button type="submit" class="ts-btn ts-btn-sm ts-btn-danger"
+              onclick="return confirm('Fermare la MAGI repair run?')">⏹ Stop</button>
+    </form>
+  </div>
+  <div style="padding:.25rem 1.25rem .75rem;">
+    <div style="background:var(--ts-border); border-radius:4px; height:8px; overflow:hidden;">
+      <div id="magi-repair-bar"
+           style="height:100%; border-radius:4px; width:0%; transition:width .4s;
+                  background:var(--ts-accent,#6366f1);">
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MAGI Regeneration Panel -->
 {% if prompts %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
@@ -215,5 +238,69 @@
 document.getElementById('magi-select-all')?.addEventListener('change', function() {
   document.querySelectorAll('.magi-prompt-cb').forEach(cb => cb.checked = this.checked);
 });
+</script>
+<script>
+(function () {
+  const STATUS_URL = '{{ url_for("study.magi_repair_status", study_id=study.id) }}';
+  const card      = document.getElementById('magi-repair-card');
+  const badge     = document.getElementById('magi-repair-badge');
+  const label     = document.getElementById('magi-repair-run-label');
+  const ptext     = document.getElementById('magi-repair-progress-text');
+  const bar       = document.getElementById('magi-repair-bar');
+  const stopForm  = document.getElementById('magi-stop-form');
+
+  const BADGE = {
+    queued:  '<span class="ts-badge ts-badge-pending">queued</span>',
+    running: '<span class="ts-badge ts-badge-info">running</span>',
+    stopped: '<span class="ts-badge" style="background:var(--ts-text-muted,#888);color:#fff;">stopped</span>',
+  };
+
+  let timer = null;
+  let wasActive = false;
+
+  function stopPolling() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  async function poll() {
+    try {
+      const res  = await fetch(STATUS_URL);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (!data.active) {
+        if (wasActive) {
+          stopPolling();
+          window.location.reload();
+        }
+        return;
+      }
+
+      wasActive = true;
+      card.style.display = '';
+      const p = data.progress || {};
+      badge.innerHTML = BADGE[data.run_status] || '';
+      label.textContent = `Run #${data.run_id}`;
+      const errTxt = p.error > 0 ? ` — ${p.error} err` : '';
+      const canTxt = p.cancelled > 0 ? ` — ${p.cancelled} annullate` : '';
+      ptext.textContent = `${p.done}/${p.total} completati${errTxt}${canTxt}`;
+      bar.style.width = (p.pct || 0) + '%';
+
+      // Mostra bottone stop solo quando la run è attivamente in lavorazione
+      if (stopForm) {
+        stopForm.action = `/experiments/${data.run_id}/stop`;
+        stopForm.style.display = ['queued', 'running'].includes(data.run_status) ? '' : 'none';
+      }
+
+      if (!['queued', 'running'].includes(data.run_status)) {
+        stopPolling();
+        setTimeout(() => window.location.reload(), 1200);
+      }
+    } catch (_) {}
+  }
+
+  poll();
+  timer = setInterval(poll, 3000);
+})();
 </script>
 {% endblock %}
