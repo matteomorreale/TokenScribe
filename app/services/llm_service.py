@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+def _is_not_chat_model(error_str: str) -> bool:
+    s = error_str.lower()
+    return "not a chat model" in s or "v1/completions" in s
+
+
 def _is_model_not_found(error_str: str) -> bool:
     s = error_str.lower()
     return (
@@ -223,6 +228,35 @@ class LLMService:
                 output_tokens=usage.completion_tokens,
                 reasoning_tokens=reasoning_toks,
                 response_text=content,
+                source="api_reported",
+            )
+        except Exception as e:
+            err = str(e)
+            if _is_not_chat_model(err):
+                return self._call_openai_responses(api_key, model_name, prompt_text, is_reasoning)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+
+    def _call_openai_responses(self, api_key: str, model_name: str, prompt_text: str, is_reasoning: bool) -> TokenScribeCallResult:
+        """Fallback for models only available on the Responses API (e.g. gpt-5.4-pro)."""
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            effort = "high" if is_reasoning else "medium"
+            response = client.responses.create(
+                model=model_name,
+                input=prompt_text,
+                reasoning={"effort": effort},
+            )
+            usage = response.usage
+            reasoning_toks = 0
+            details = getattr(usage, "output_tokens_details", None)
+            if details:
+                reasoning_toks = getattr(details, "reasoning_tokens", 0) or 0
+            return TokenScribeCallResult(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                reasoning_tokens=reasoning_toks,
+                response_text=response.output_text or "",
                 source="api_reported",
             )
         except Exception as e:
