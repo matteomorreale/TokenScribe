@@ -10,7 +10,18 @@ GET  /studies/<id>                    study detail
 GET  /studies/<id>/edit               edit form
 POST /studies/<id>/edit               update study
 POST /studies/<id>/delete             delete study
+GET  /studies/<id>/magi-repair-status JSON — progress of the active MAGI repair run (if any)
+POST /studies/<id>/regen-magi         bulk re-compute Phase 1 + Phase 2 for all (or selected) prompts
 ```
+
+### POST /studies/{study_id}/regen-magi — Form Fields
+
+```text
+prompt_ids   list[int]  (optional) subset of prompt IDs to regenerate; omit to regenerate all
+```
+
+Creates a dedicated `experiment_run` with `notes='[MAGI repair]'`, recomputes MAGI Phase 1
+for all approved+scored candidates, then enqueues Phase 2 items if judges are configured.
 
 ## Prompts
 
@@ -61,13 +72,31 @@ judge_melchior       model_id for Melchior  (required if force_magi=1)
 ## Experiments
 
 ```text
-GET  /experiments                          list all runs
-GET  /studies/<id>/experiments/new         form + readiness table (GET fetches readiness per prompt)
-POST /studies/<id>/experiments/new         execute experiment run (calls LLM APIs, stores results)
-POST /experiments/<id>/delete              delete a run (cascade); accepts ?next= redirect
-GET  /experiments/<id>                     run detail — token results + efficiency metrics
-GET  /experiments/<id>/pei                 PEI results for run (global + per script/morphology group)
+GET  /experiments                             list all runs
+GET  /studies/<id>/experiments/new            form + readiness table (GET fetches readiness per prompt)
+POST /studies/<id>/experiments/new            execute experiment run (calls LLM APIs, stores results)
+POST /experiments/<id>/delete                 delete a run (cascade); accepts ?next= redirect
+GET  /experiments/<id>                        run detail — token results + efficiency metrics
+GET  /experiments/<id>/pei                    PEI results for run (global + per script/morphology group)
+GET  /experiments/<id>/queue-status           JSON live progress + per-model error summary
+POST /experiments/<id>/stop                   cancel all pending items → run status = stopped
+POST /experiments/<id>/restart                reset cancelled/error/timeout items → re-queue
+POST /experiments/<id>/resume                 reset error/timeout items → re-queue (alias for no-stop flow)
+POST /experiments/<id>/retry-models           retry errors for specific model_ids (form: model_ids list)
+POST /experiments/<id>/retry-errors           retry all error/timeout items
+POST /experiments/<id>/redo-model             redo all calls for one model (form: model_id, save_history)
+POST /experiments/<id>/replace-model          swap one model for another (form: old_model_id, new_model_id, save_history)
+POST /experiments/<id>/revalidate-status      recompute run status from DB state (fixes stuck runs)
 ```
+
+### POST /studies/{study_id}/experiments/new — Form Fields
+
+```text
+model_ids      list[int]  models to call
+repetitions    int        repetitions per cell (default 3, range 1–10)
+```
+
+Each (prompt × model × language) cell generates `repetitions` queue items with `repetition_index` 0..N−1.
 
 ## Settings
 

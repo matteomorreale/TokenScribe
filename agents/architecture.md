@@ -27,6 +27,7 @@ TokenScribe/
 │   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback
 │   │   ├── scoring_service.py   # SFS (DSF+RTF), LER, PEI, MAGI Phase 1 computation
 │   │   ├── magi_service.py      # MAGI Phase 2: three-judge LLM panel with retry
+│   │   ├── crypto_service.py    # Fernet AES-128-CBC symmetric encryption for API keys
 │   │   └── export_service.py    # Dataset export (CSV, JSON)
 │   ├── views/
 │   │   └── templates/           # Jinja2 HTML templates (MVC Views)
@@ -73,17 +74,24 @@ TokenScribe/
 
 ### Experiment Execution
 
-- controllers/experiment_controller.py — create/delete runs; readiness check on GET /new
-- controllers/run_controller.py — JSON queue-status polling, resume/retry, redo-model, replace-model
+- controllers/experiment_controller.py — create/delete runs; readiness check on GET /new; `repetitions` form param
+- controllers/run_controller.py — JSON queue-status polling, stop/restart/resume/retry, redo-model, replace-model, revalidate-status
 - models/experiment_model.py
 - models/queue_model.py
 - services/llm_service.py
 - services/queue_service.py
 
+### MAGI Repair
+
+- controllers/study_controller.py — `GET /<id>/magi-repair-status` (JSON), `POST /<id>/regen-magi`
+- models/selection_score_model.py
+- services/magi_service.py
+
 ### Settings & Configuration
 
 - controllers/settings_controller.py
-- models/settings_model.py
+- models/settings_model.py — transparent encrypt/decrypt for API key fields via `CryptoService`
+- services/crypto_service.py — Fernet-based symmetric encryption; key from `TOKENSCRIBE_ENCRYPTION_KEY` env var
 
 ### Reporting & Export
 
@@ -134,9 +142,10 @@ TokenScribe/
 
 ### ExperimentModel
 
-- `get_results_by_run(run_id)` — rows enriched with: `reasoning_tokens`, `cost_visible_only`, `ror`, `reasoning_observed`, `reasoning_state` (4-way: `active` | `capable_but_inactive` | `anomaly` | `non_reasoning`), `prompt_notes`, `is_reasoning_capable`; logs WARNING for `anomaly` state
+- `get_results_by_run(run_id)` — filters to `attempt_status='success'` rows, selects MAX `attempt_index` per (run, prompt, language, model, repetition_index); enriches with: `reasoning_tokens`, `cost_visible_only`, `ror`, `reasoning_observed`, `reasoning_state` (4-way), `prompt_notes`, `is_reasoning_capable`, `response_valid`; logs WARNING for `anomaly` state
+- `insert_token_result(…, repetition_index, attempt_status)` — `attempt_index` auto-incremented atomically via MAX+1 subquery; `response_valid` auto-derived from response text if not passed explicitly
 - `get_translation_scores_by_run(run_id)` — joins `run_translation_snapshot` → immune to re-approvals; includes all MAGI fields; `magi_judges` deserialized to dict before returning
-- `get_latest_pei_for_prompt(prompt_id)` — most recent PEI from `pei_results` (fallback when no approved translations exist at MAGI Phase 1 compute time)
+- `get_latest_pei_for_prompt(prompt_id)` — most recent PEI from `pei_results`
 - `snapshot_translations(run_id, study_id)` — freezes approved translations at run start
 - `delete_run(run_id)` / `delete_runs_bulk(run_ids)` — cascade-deletes token_results
 - `archive_model_results(run_id, model_id, model_name, reason, replaced_by_model_id, replaced_by_model_name)` — snapshots token_results for a model into `run_history` before redo/replace
@@ -144,11 +153,22 @@ TokenScribe/
 - `get_run_history(run_id)` — returns archived history entries for a run (without `results_json`)
 - `reconstruct_llm_payloads(run_id, model_id)` — rebuilds llm_call payloads from token_results + run_translation_snapshot; used for runs created before the queue system (no run_queue rows)
 
-### QueueModel (new redo/replace methods)
+### QueueModel
 
+- `cancel_pending_items(run_id)` → int — marks all `pending` items as `cancelled`; used by stop flow
+- `restart_stopped_run(run_id)` → int — resets `cancelled` / `error` / `timeout` / `running` items to `pending`; used by restart flow
+- `reset_items_for_retry(run_id, model_ids)` → int — resets `error` / `timeout` items (optionally filtered by model_ids) to `pending`
+- `recover_stale_running(run_id)` — resets items stuck in `running` after crash/restart
+- `recompute_run_status(run_id)` → str — derives `experiment_runs.status` from queue counts and `response_valid` flag; returns new status
 - `get_model_llm_payloads(run_id, model_id)` — returns all llm_call payloads for a model from run_queue (any status)
 - `redo_model_items(run_id, model_id, payloads)` — resets existing llm_call items for the model to `pending`; if no queue items exist, creates them from `payloads` (legacy runs support)
 - `replace_model_items(run_id, old_model_id, new_model_id, new_model_info, payloads)` — deletes old model's queue items and inserts new ones for `new_model_id` with updated payload fields
+
+### CryptoService
+
+- `__init__(env_path)` — reads `TOKENSCRIBE_ENCRYPTION_KEY` from env; auto-generates and appends key to `.env` on first run
+- `encrypt(value)` → str — Fernet-encrypts a plaintext string
+- `decrypt(value)` → str — decrypts a Fernet token; returns value unchanged for pre-encryption plain-text (transparent migration path)
 
 ## UX Patterns
 
@@ -189,10 +209,12 @@ Closed via ×, Escape, or click-outside.
 1. Create study → add prompts → generate candidates (AI or manual) → score SFS+LER → approve
 2. Compute MAGI Phase 1 scores → rank candidates → flag `magi_required`
 3. Optionally: run Phase 2 LLM panel (modal in `translations/list.html`) → store judge verdicts
-4. Check pre-run readiness semaphore (`/prompts/<id>` widget + `/experiments/new` table)
-5. Run experiment → call LLM APIs → snapshot translations → store token results → compute PEI
-6. Export dataset (CSV/JSON) with full enrichment (SFS, LER, PEI, MAGI, token efficiency)
-7. (Optional) Redo/Replace model — on completed/partial run: optionally archive results to `run_history`, delete model results, reset/swap queue items, re-queue under same or new model
+4. (Optional) MAGI repair: `POST /studies/<id>/regen-magi` → creates `[MAGI repair]` run, recomputes Phase 1 + Phase 2 for selected prompts
+5. Check pre-run readiness semaphore (`/prompts/<id>` widget + `/experiments/new` table)
+6. Run experiment (with `repetitions` param, default 3) → call LLM APIs `N` times per cell → snapshot translations → store token results (`repetition_index`, `attempt_index`) → compute PEI
+7. (Optional) Stop run mid-flight: `POST /experiments/<id>/stop` cancels pending items; `POST /experiments/<id>/restart` re-queues cancelled/error items
+8. Export dataset (CSV/JSON) with full enrichment (SFS, LER, PEI, MAGI, token efficiency)
+9. (Optional) Redo/Replace model — on completed/partial run: optionally archive results to `run_history`, delete model results, reset/swap queue items, re-queue under same or new model
 
 ## Redo / Replace Model Flow
 

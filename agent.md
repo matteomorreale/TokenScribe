@@ -24,17 +24,19 @@ Services layer handles business logic; Controllers handle HTTP routing.
 
 ## Core Modules
 
-- **StudyController** — CRUD for studies
+- **StudyController** — CRUD for studies; `GET /<id>/magi-repair-status` (JSON progress), `POST /<id>/regen-magi` (bulk MAGI regeneration)
 - **PromptController** — prompt management, template enforcement, readiness status
 - **TranslationController** — candidate management, scoring (SFS + LER), approval, MAGI scores
-- **ExperimentController** — run experiments via LLM APIs, store token results, delete runs
-- **SettingsController** — API keys, model configuration (including Qwen region)
+- **ExperimentController** — create runs (with `repetitions` param), delete runs
+- **RunController** — JSON queue-status polling; stop/restart/resume/retry; redo-model / replace-model; revalidate-status
+- **SettingsController** — API keys (Fernet-encrypted at rest), model configuration (including Qwen region)
 - **ReportController** — export dataset, score visualizations, bulk delete runs
 - **LLMService** — unified interface to all providers (7 total); `TokenScribeCallResult` carries `model_not_found` flag; cross-provider 404/deprecation detection via `_is_model_not_found()`
 - **QueueService** — daemon thread processing `run_queue` one item at a time; dispatches `llm_call`, `magi_phase2`, `compute_pei`, `finalize_pei_groups`, `snapshot_translations`; automatic tier-aware fallback on `model_not_found`
-- **QueueModel** — CRUD for `run_queue` table; dequeue / mark_done / mark_error / mark_timeout / recompute_run_status
+- **QueueModel** — CRUD for `run_queue`; dequeue / mark_done / mark_error / mark_timeout / cancel_pending_items / restart_stopped_run / reset_items_for_retry / recompute_run_status
 - **ScoringService** — SFS (DSF+RTF), LER, PEI, MAGI Selection Score computation
 - **MAGIService** — three-judge LLM panel (Balthasar, Caspar, Melchior) with retry logic
+- **CryptoService** — Fernet AES-128-CBC symmetric encryption; key from `TOKENSCRIBE_ENCRYPTION_KEY` env var (auto-generated to `.env` on first run); `SettingsModel` calls it transparently for `*_api_key` fields
 - **ExportService** — CSV and JSON export with full metric enrichment
 - **DatabaseManager** — SQLite connection, schema bootstrap, and migrations
 
@@ -100,18 +102,29 @@ The judge prompt asks for a single JSON object with the three dimension keys, st
   - `"capable_but_inactive"` — capable model, no reasoning tokens (e.g. extended-thinking disabled)
   - `"anomaly"` — non-capable model yet reasoning tokens detected → WARNING logged
   - `"non_reasoning"` — non-capable model, no reasoning tokens
+- `response_valid` — `0` if response text is empty/blank or visible_output_tokens = 0; used by `recompute_run_status()` to detect partial completions
 
 Note: `visible_output_tokens` uses tiktoken (cl100k_base) for all models. For non-OpenAI models
 (e.g. Anthropic, DeepSeek), small non-zero `reasoning_tokens` may reflect tokenizer mismatch
 rather than true hidden reasoning. The `> 10` threshold guards against this noise.
+
+### Repetition Support
+
+Each experiment run can specify `repetitions_per_cell` (1–10, default 3): every (prompt × model × language)
+cell gets N queue items with `repetition_index` 0..N−1. Each item inserts a `token_results` row with
+that `repetition_index`. Retries within a cell increment `attempt_index` atomically; only the latest
+`attempt_status='success'` row per (run, prompt, language, model, repetition_index) is surfaced by
+`get_results_by_run()`.
 
 ## Primary Application Flows
 
 1. Create study → add prompts → generate candidates (AI or manual) → score SFS+LER → approve
 2. Compute MAGI Selection Scores (Phase 1) → rank candidates → flag `magi_required`
 3. Optionally: run Phase 2 LLM panel for flagged candidates → store per-judge verdicts + consensus
-4. Check pre-run readiness (semaphore) per prompt → run experiment → store token results (immutable) → compute PEI
-5. Export dataset (CSV/JSON) enriched with: SFS, LER, PEI, visible/reasoning tokens, MAGI scores + judge breakdown
+4. (Optional) MAGI repair via study detail page: `POST /studies/<id>/regen-magi` → re-runs Phase 1+2 for selected prompts as a `[MAGI repair]` run
+5. Check pre-run readiness (semaphore) per prompt → run experiment (choose `repetitions`) → store token results → compute PEI
+6. (Optional) Stop mid-flight: `POST /experiments/<id>/stop` cancels pending items; `POST /experiments/<id>/restart` re-queues them
+7. Export dataset (CSV/JSON) enriched with: SFS, LER, PEI, visible/reasoning tokens, MAGI scores + judge breakdown
 
 ## Pre-Run Readiness Semaphore
 
@@ -190,16 +203,18 @@ and deactivated (`is_active=0`) in the DB to prevent them from appearing in the 
 - Author: Matteo Morreale
 - No references to "manus" in class/object/variable names
 - Routes: /studies, /prompts, /translations, /experiments, /settings, /reports
-- All experiment runs are immutable (no UPDATE on token_results)
+- `token_results` rows are INSERT-only per (run, prompt, language, model, repetition_index, attempt_index); retries add a new row with incremented `attempt_index`
 - Prompt template: [Instruction] <<< [Input] >>> [Expected Output]
 - Schema migrations via `_migrate_schema()` in DatabaseManager using ALTER TABLE ADD COLUMN
-- Derived fields (`reasoning_tokens`, `ror`, `cost_visible_only`, `reasoning_observed`, `reasoning_state`) are
-  computed in Python inside `get_results_by_run()` — NOT stored in the DB
+- Derived fields (`reasoning_tokens`, `ror`, `cost_visible_only`, `reasoning_observed`, `reasoning_state`, `response_valid`) are computed in Python inside `get_results_by_run()` — NOT stored in the DB
 - `magi_judges` is stored as JSON TEXT in DB; deserialized to dict in both
   `SelectionScoreModel.get_by_prompt()` and `ExperimentModel.get_translation_scores_by_run()`
   so templates and exports always receive a Python dict, never a raw string
 - `model_not_found` flag on `TokenScribeCallResult` drives automatic fallback in QueueService;
   never raise directly — let the flag propagate so the queue can substitute a valid model
+- API keys are encrypted at rest using `CryptoService` (Fernet); `SettingsModel` handles encryption/decryption transparently; old plain-text values in the DB are decrypted gracefully (InvalidToken → return as-is)
+- Run statuses: `queued` | `running` | `completed` | `partial` | `error` | `stopped`
+- Queue item statuses: `pending` | `running` | `done` | `error` | `timeout` | `cancelled`
 
 ## Documentation Map
 

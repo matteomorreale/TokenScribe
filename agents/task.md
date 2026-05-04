@@ -348,6 +348,68 @@
   }
   ,
   {
+    "task_id": "T026",
+    "title": "CryptoService — Fernet encryption for API keys at rest",
+    "status": "completed",
+    "dependencies": ["T003"],
+    "affected_modules": ["CryptoService", "SettingsModel", "SettingsController"],
+    "affected_files": [
+      "app/services/crypto_service.py",
+      "app/services/__init__.py",
+      "app/models/settings_model.py",
+      "app/controllers/settings_controller.py",
+      "requirements.txt"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "New service: CryptoService wraps Fernet (AES-128-CBC + HMAC-SHA256). Key read from TOKENSCRIBE_ENCRYPTION_KEY env var; auto-generated and appended to .env on first run. SettingsModel accepts optional crypto param; _ENCRYPTED_KEYS frozenset lists all *_api_key keys. _enc()/_dec() called transparently in get/set/set_many/get_all. Transparent migration: decrypt() returns value unchanged on InvalidToken, allowing pre-encryption plain-text values to be read without error."
+  }
+  ,
+  {
+    "task_id": "T027",
+    "title": "Repetition parameter + token_results schema updates (repetition_index, attempt_index, response_valid)",
+    "status": "completed",
+    "dependencies": ["T022"],
+    "affected_modules": ["DatabaseManager", "ExperimentModel", "ExperimentController", "QueueService"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/models/experiment_model.py",
+      "app/controllers/experiment_controller.py",
+      "app/services/queue_service.py"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New columns on token_results: repetition_index INT NOT NULL DEFAULT 0, attempt_index INT NOT NULL DEFAULT 0 (auto-incremented atomically via MAX+1 subquery in insert), attempt_status TEXT NOT NULL DEFAULT 'success', response_valid INT NOT NULL DEFAULT 1. Old 4-col unique index replaced by 6-col (run_id, prompt_id, language_id, model_id, repetition_index, attempt_index). ExperimentController reads 'repetitions' form field (1–10, default 3); enqueues N items per cell with repetition_index 0..N-1. insert_token_result() derives response_valid automatically. get_results_by_run() uses CTE to filter attempt_status='success' and MAX(attempt_index) per cell."
+  }
+  ,
+  {
+    "task_id": "T028",
+    "title": "Run stop/restart functionality + revalidate-status",
+    "status": "completed",
+    "dependencies": ["T022"],
+    "affected_modules": ["QueueModel", "RunController"],
+    "affected_files": [
+      "app/models/queue_model.py",
+      "app/controllers/run_controller.py",
+      "app/views/templates/experiments/detail.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "New run status: 'stopped'. New item status: 'cancelled'. New QueueModel methods: cancel_pending_items() marks all pending items cancelled; restart_stopped_run() resets cancelled/error/timeout/running items to pending; recover_stale_running() resets items stuck in 'running' after crash. New RunController endpoints: POST /experiments/<id>/stop (cancel_pending + set stopped), POST /experiments/<id>/restart (restart_stopped_run + set queued), POST /experiments/<id>/revalidate-status (recompute_run_status). detail.html shows Stop and Restart buttons based on run status."
+  }
+  ,
+  {
+    "task_id": "T029",
+    "title": "MAGI repair — bulk regen-magi at study level",
+    "status": "completed",
+    "dependencies": ["T012", "T022"],
+    "affected_modules": ["StudyController", "ExperimentModel", "SelectionScoreModel", "MAGIService"],
+    "affected_files": [
+      "app/controllers/study_controller.py",
+      "app/views/templates/studies/detail.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "GET /studies/<id>/magi-repair-status returns JSON {active, run_id, run_status, progress} for the most recent run with notes='[MAGI repair]' and status in (queued, running). POST /studies/<id>/regen-magi creates a dedicated experiment_run with notes='[MAGI repair]', re-computes Phase 1 for all approved+scored candidates of the selected (or all) prompts, then enqueues Phase 2 magi_phase2 items if all 3 judges are configured. study detail.html shows a 'Rigenera MAGI' panel with prompt checkboxes, live progress bar polling magi-repair-status, and a Stop button."
+  }
+  ,
+  {
     "task_id": "T025",
     "title": "Redo / Replace model calls on completed or partial runs",
     "status": "completed",

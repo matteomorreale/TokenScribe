@@ -54,7 +54,7 @@ models
 experiment_runs
   id, study_id → studies.id, timestamp, notes
 
-token_results                 -- IMMUTABLE: INSERT only, no UPDATE
+token_results                 -- INSERT + retry; immutable per (run, cell, repetition, attempt)
   id, run_id → experiment_runs.id, prompt_id → prompts.id,
   language_id → languages.id, model_id → models.id,
   input_tokens (INT), output_tokens (INT),
@@ -66,7 +66,13 @@ token_results                 -- IMMUTABLE: INSERT only, no UPDATE
   source (api_reported|estimated),
   token_accounting_mode TEXT,
   response_text TEXT,
+  response_valid INTEGER NOT NULL DEFAULT 1,  -- 0 if response text is empty/blank
+  repetition_index INTEGER NOT NULL DEFAULT 0,-- 0-based repetition within the cell
+  attempt_index INTEGER NOT NULL DEFAULT 0,   -- auto-incremented atomically on retry
+  attempt_status TEXT NOT NULL DEFAULT 'success',  -- "success" | "retry"
   created_at
+
+  UNIQUE(run_id, prompt_id, language_id, model_id, repetition_index, attempt_index)
 
   -- Derived in Python by get_results_by_run() (NOT stored):
   -- reasoning_tokens = max(0, api_reported_output_tokens - visible_output_tokens)
@@ -78,6 +84,9 @@ token_results                 -- IMMUTABLE: INSERT only, no UPDATE
   --                 | "capable_but_inactive"  (is_reasoning=1 AND NOT reasoning_observed)
   --                 | "anomaly"               (is_reasoning=0 AND reasoning_observed) → WARNING logged
   --                 | "non_reasoning"         (is_reasoning=0 AND NOT reasoning_observed)
+
+  -- get_results_by_run() filters to attempt_status='success' rows only,
+  -- selecting the MAX(attempt_index) per (run, prompt, language, model, repetition_index).
 
 pei_results
   id, run_id → experiment_runs.id, prompt_id → prompts.id,
@@ -127,9 +136,9 @@ run_translation_snapshot
 run_queue                     -- async work items for QueueService daemon thread
   id, run_id → experiment_runs.id,
   operation_type TEXT,        -- "llm_call" | "magi_phase2" | "compute_pei" | "finalize_pei_groups" | "snapshot_translations"
-  item_key TEXT,              -- unique key per run: e.g. "llm:p1:l3:m7"
+  item_key TEXT,              -- unique key per run: e.g. "llm:p1:l3:m7:r0"  (r=repetition_index)
   payload TEXT (JSON),        -- all data the worker needs (model_name, provider, prompt text, etc.)
-  status TEXT,                -- "pending" | "running" | "done" | "error" | "timeout"
+  status TEXT,                -- "pending" | "running" | "done" | "error" | "timeout" | "cancelled"
   priority INT DEFAULT 0,
   retry_count INT DEFAULT 0,
   error_message TEXT,
@@ -151,6 +160,7 @@ settings
 
   -- Notable settings keys:
   -- {provider}_api_key   — API key per provider (openai, anthropic, google, deepseek, meta, qwen, mistral)
+  --                        values for _ENCRYPTED_KEYS are stored Fernet-encrypted by CryptoService
   -- qwen_region          — "china" (dashscope.aliyuncs.com) | "international" (dashscope-intl.aliyuncs.com)
   -- magi_judge_{name}_id — model_id for Balthasar / Caspar / Melchior
   -- pricing_unit         — "per_million" (set by one-shot migration; guards against double-multiplying costs)
@@ -189,7 +199,7 @@ token_results ──> models ──> providers
 
 ## Key Constraints
 
-- `token_results`: normally INSERT-only; the redo/replace flow first archives rows to `run_history` then deletes them for the target model before re-queueing, so the immutability invariant holds per-run-per-model within a single execution cycle
+- `token_results`: INSERT-only within a single (repetition_index, attempt_index) slot; retries append a new row with incremented `attempt_index`; `get_results_by_run()` surfaces only the latest `attempt_status='success'` row per cell+repetition. The redo/replace flow first archives rows to `run_history` then deletes them for the target model before re-queueing.
 - `run_history`: INSERT-only archive; one row per (run_id, model_id, operation); `results_json` is a snapshot of all token_results rows for that model at the moment of archival
 - `run_translation_snapshot`: written once at run start via `snapshot_translations(run_id, study_id)`;
   `get_translation_scores_by_run` JOINs this table, not `approved_translations`, so historical
