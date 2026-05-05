@@ -23,7 +23,7 @@ TokenScribe/
 │   │   ├── selection_score_model.py  # MAGI Phase 1 + readiness semaphore
 │   │   └── settings_model.py
 │   ├── services/                # Business logic layer
-│   │   ├── llm_service.py       # Unified LLM provider interface (7 providers); model_not_found fallback
+│   │   ├── llm_service.py       # Unified LLM provider interface (8 providers); model_not_found + rate-limit fallback
 │   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback
 │   │   ├── scoring_service.py   # SFS (DSF+RTF), LER, PEI, MAGI Phase 1 computation
 │   │   ├── magi_service.py      # MAGI Phase 2: three-judge LLM panel with retry
@@ -152,6 +152,8 @@ TokenScribe/
 - `delete_model_results(run_id, model_id)` — deletes token_results for a specific model in a run
 - `get_run_history(run_id)` — returns archived history entries for a run (without `results_json`)
 - `reconstruct_llm_payloads(run_id, model_id)` — rebuilds llm_call payloads from token_results + run_translation_snapshot; used for runs created before the queue system (no run_queue rows)
+- `get_run_model_ids(run_id)` → `set[int]` — returns all model_ids already present in the run (from both `token_results` and `run_queue` llm_call items)
+- `build_llm_payloads_from_snapshot(run_id, model_id, repetitions)` → `list[dict]` — generates llm_call payloads for a new model using the frozen `run_translation_snapshot`; used by add-models flow
 
 ### QueueModel
 
@@ -163,6 +165,7 @@ TokenScribe/
 - `get_model_llm_payloads(run_id, model_id)` — returns all llm_call payloads for a model from run_queue (any status)
 - `redo_model_items(run_id, model_id, payloads)` — resets existing llm_call items for the model to `pending`; if no queue items exist, creates them from `payloads` (legacy runs support)
 - `replace_model_items(run_id, old_model_id, new_model_id, new_model_info, payloads)` — deletes old model's queue items and inserts new ones for `new_model_id` with updated payload fields
+- `get_run_repetitions(run_id)` → int — returns the number of repetitions used in the run (from `token_results` MAX repetition_index; fallback from queue payloads; default 3)
 
 ### CryptoService
 
@@ -215,6 +218,7 @@ Closed via ×, Escape, or click-outside.
 7. (Optional) Stop run mid-flight: `POST /experiments/<id>/stop` cancels pending items; `POST /experiments/<id>/restart` re-queues cancelled/error items
 8. Export dataset (CSV/JSON) with full enrichment (SFS, LER, PEI, MAGI, token efficiency)
 9. (Optional) Redo/Replace model — on completed/partial run: optionally archive results to `run_history`, delete model results, reset/swap queue items, re-queue under same or new model
+10. (Optional) Add models — on completed/partial/stopped run: `POST /experiments/<id>/add-models`; builds payloads from frozen `run_translation_snapshot` via `build_llm_payloads_from_snapshot()`; skips models already present in the run
 
 ## Redo / Replace Model Flow
 
@@ -246,12 +250,23 @@ returns a 404 / "no longer available" / "not_found_error" response.
 replacement (flash→flash, sonnet→sonnet, etc.) from active models, updating `model_id` in the
 `token_results` insert to avoid FK violations against the deleted/deactivated model row.
 
+`TokenScribeCallResult.rate_limited` (bool) is set by `_is_rate_limited()` on 429 / "rate_limit" /
+"quota exceeded" / "resource_exhausted" responses. In `QueueService._exec_llm_call()` a rate-limited
+result raises `RateLimitError`; the worker loop catches it and calls `QueueModel.requeue_at_end()`
+(delete + re-insert with new auto-increment id) so the item goes to the back of the queue. After
+`max_retries=10` re-queues the item is marked `error`.
+
+OpenAI Responses API fallback: `_call_openai()` catches a "not a chat model" / "v1/completions" error
+and retries via `_call_openai_responses()` (using `client.responses.create()` with `reasoning.effort`).
+This transparently handles models only available on the Responses API (e.g. gpt-5.4-pro).
+
 ## External Dependencies
 
 - sentence-transformers — local multilingual embeddings (paraphrase-multilingual-MiniLM-L12-v2)
 - tiktoken — neutral tokenizer (cl100k_base) for PEI and visible_output_tokens
 - openai, anthropic, google-generativeai, mistralai (LLM provider SDKs)
 - Qwen uses the `openai` SDK pointed at DashScope endpoints (no separate SDK)
+- xAI (Grok) uses the `openai` SDK pointed at `https://api.x.ai/v1` (no separate SDK)
 
 ## Files Agents Should Avoid Reading Unless Necessary
 

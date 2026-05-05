@@ -27,13 +27,13 @@ Services layer handles business logic; Controllers handle HTTP routing.
 - **StudyController** — CRUD for studies; `GET /<id>/magi-repair-status` (JSON progress), `POST /<id>/regen-magi` (bulk MAGI regeneration)
 - **PromptController** — prompt management, template enforcement, readiness status
 - **TranslationController** — candidate management, scoring (SFS + LER), approval, MAGI scores
-- **ExperimentController** — create runs (with `repetitions` param), delete runs
-- **RunController** — JSON queue-status polling; stop/restart/resume/retry; redo-model / replace-model; revalidate-status
+- **ExperimentController** — create runs (with `repetitions` + `force_magi` params), delete runs
+- **RunController** — JSON queue-status polling; stop/restart/resume/retry; redo-model / replace-model / add-models; revalidate-status
 - **SettingsController** — API keys (Fernet-encrypted at rest), model configuration (including Qwen region)
 - **ReportController** — export dataset, score visualizations, bulk delete runs
-- **LLMService** — unified interface to all providers (7 total); `TokenScribeCallResult` carries `model_not_found` flag; cross-provider 404/deprecation detection via `_is_model_not_found()`
-- **QueueService** — daemon thread processing `run_queue` one item at a time; dispatches `llm_call`, `magi_phase2`, `compute_pei`, `finalize_pei_groups`, `snapshot_translations`; automatic tier-aware fallback on `model_not_found`
-- **QueueModel** — CRUD for `run_queue`; dequeue / mark_done / mark_error / mark_timeout / cancel_pending_items / restart_stopped_run / reset_items_for_retry / recompute_run_status
+- **LLMService** — unified interface to all providers (8 total: OpenAI, Anthropic, Google, DeepSeek, Meta, Qwen, Mistral, xAI); `TokenScribeCallResult` carries `model_not_found` and `rate_limited` flags; cross-provider 404/deprecation detection via `_is_model_not_found()`; Responses API fallback for non-chat OpenAI models
+- **QueueService** — daemon thread processing `run_queue` one item at a time; dispatches `llm_call`, `magi_phase2`, `compute_pei`, `finalize_pei_groups`, `snapshot_translations`; automatic tier-aware fallback on `model_not_found`; rate-limited items re-queued at tail via `requeue_at_end()` (up to 10 retries)
+- **QueueModel** — CRUD for `run_queue`; dequeue / mark_done / mark_error / mark_timeout / cancel_pending_items / restart_stopped_run / reset_items_for_retry / recompute_run_status / get_run_repetitions
 - **ScoringService** — SFS (DSF+RTF), LER, PEI, MAGI Selection Score computation
 - **MAGIService** — three-judge LLM panel (Balthasar, Caspar, Melchior) with retry logic
 - **CryptoService** — Fernet AES-128-CBC symmetric encryption; key from `TOKENSCRIBE_ENCRYPTION_KEY` env var (auto-generated to `.env` on first run); `SettingsModel` calls it transparently for `*_api_key` fields
@@ -124,7 +124,8 @@ that `repetition_index`. Retries within a cell increment `attempt_index` atomica
 4. (Optional) MAGI repair via study detail page: `POST /studies/<id>/regen-magi` → re-runs Phase 1+2 for selected prompts as a `[MAGI repair]` run
 5. Check pre-run readiness (semaphore) per prompt → run experiment (choose `repetitions`) → store token results → compute PEI
 6. (Optional) Stop mid-flight: `POST /experiments/<id>/stop` cancels pending items; `POST /experiments/<id>/restart` re-queues them
-7. Export dataset (CSV/JSON) enriched with: SFS, LER, PEI, visible/reasoning tokens, MAGI scores + judge breakdown
+7. (Optional) Add models to existing run: `POST /experiments/<id>/add-models` on completed/partial/stopped run → builds payloads from frozen snapshot, skips already-present models
+8. Export dataset (CSV/JSON) enriched with: SFS, LER, PEI, visible/reasoning tokens, MAGI scores + judge breakdown
 
 ## Pre-Run Readiness Semaphore
 
@@ -167,7 +168,7 @@ to signal it is hoverable. Old records (stored before `raw_response` was added) 
 - OpenAI-compatible (OpenAI, DeepSeek, Meta, Qwen, Mistral): `"error code: 404"` + `"model"`, or `"model_not_found"`, `"no such model"`, `"model does not exist"`
 - Google: `"no longer available"` or error string starting with `"404 "`
 
-All 7 provider `except` blocks call `_is_model_not_found()` and set the flag accordingly.
+All 8 provider `except` blocks call `_is_model_not_found()` and set the flag accordingly.
 
 When `QueueService._exec_llm_call` receives `model_not_found=True`, it calls `_get_fallback_model()`:
 
@@ -178,6 +179,20 @@ When `QueueService._exec_llm_call` receives `model_not_found=True`, it calls `_g
 - Updates `model_id` to the fallback's DB id (prevents FK constraint violations when the
   original model has been removed from the `models` table)
 - Examples: `gemini-2.0-flash` → `gemini-2.5-flash`; `claude-sonnet-4` → `claude-sonnet-4-6`
+
+### Rate-Limit Handling
+
+`TokenScribeCallResult.rate_limited: bool` is set by `_is_rate_limited(error_str)` on 429 /
+"rate_limit" / "quota exceeded" / "resource_exhausted" responses.
+In `_exec_llm_call`, a rate-limited result raises `RateLimitError`. The worker loop catches it and
+calls `QueueModel.requeue_at_end()`: the item is deleted and re-inserted with a new auto-increment
+id so it goes to the tail of the queue. After `max_retries=10` re-queues it is marked `error`.
+
+### OpenAI Responses API Fallback
+
+`_call_openai()` catches `"not a chat model"` / `"v1/completions"` errors and automatically retries
+via `_call_openai_responses()` (using `client.responses.create()` with `reasoning.effort`).
+This transparently supports models only available on the Responses API (e.g. gpt-5.4-pro).
 
 ### Qwen Region Setting
 
@@ -210,8 +225,10 @@ and deactivated (`is_active=0`) in the DB to prevent them from appearing in the 
 - `magi_judges` is stored as JSON TEXT in DB; deserialized to dict in both
   `SelectionScoreModel.get_by_prompt()` and `ExperimentModel.get_translation_scores_by_run()`
   so templates and exports always receive a Python dict, never a raw string
-- `model_not_found` flag on `TokenScribeCallResult` drives automatic fallback in QueueService;
+- `model_not_found` flag on `TokenScribeCallResult` drives automatic tier-aware fallback in QueueService;
   never raise directly — let the flag propagate so the queue can substitute a valid model
+- `rate_limited` flag on `TokenScribeCallResult` drives `RateLimitError` → `requeue_at_end()` in QueueService;
+  never raise directly — let the flag propagate so the queue can manage retries
 - API keys are encrypted at rest using `CryptoService` (Fernet); `SettingsModel` handles encryption/decryption transparently; old plain-text values in the DB are decrypted gracefully (InvalidToken → return as-is)
 - Run statuses: `queued` | `running` | `completed` | `partial` | `error` | `stopped`
 - Queue item statuses: `pending` | `running` | `done` | `error` | `timeout` | `cancelled`

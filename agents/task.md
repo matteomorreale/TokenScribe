@@ -426,5 +426,24 @@
     "requires_db_changes": true,
     "notes_for_agent": "New table: run_history (run_id, model_id, model_name, reason, replaced_by_model_id, replaced_by_model_name, results_json). Created via CREATE TABLE IF NOT EXISTS in both _create_tables() and _migrate_schema() guard. New ExperimentModel methods: archive_model_results(), delete_model_results(), get_run_history(), reconstruct_llm_payloads(). New QueueModel methods: get_model_llm_payloads(), redo_model_items(), replace_model_items(). reconstruct_llm_payloads() handles legacy runs (no queue items) by rebuilding payloads from token_results + run_translation_snapshot. New controller endpoints: POST /experiments/<id>/redo-model, POST /experiments/<id>/replace-model — both accept save_history=1 checkbox. detail.html: 'Gestione Modelli' card (visible on completed/partial), per-model Rifai/Sostituisci buttons, modal-redo and modal-replace modals, 'Storico Archivi' card. all_models and run_history now passed to detail template. PEI is NOT recomputed on redo/replace (it is independent of model calls)."
   }
+  ,
+  {
+    "task_id": "T030",
+    "title": "xAI (Grok) provider + Responses API fallback + rate-limit requeue + add-models endpoint",
+    "status": "completed",
+    "dependencies": ["T023", "T022", "T025"],
+    "affected_modules": ["LLMService", "QueueService", "QueueModel", "RunController", "ExperimentModel", "SettingsController", "Config"],
+    "affected_files": [
+      "app/services/llm_service.py",
+      "app/services/queue_service.py",
+      "app/models/queue_model.py",
+      "app/models/experiment_model.py",
+      "app/controllers/run_controller.py",
+      "app/controllers/settings_controller.py",
+      "config.py"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "1) xAI/Grok: 8th provider (PROVIDER_XAI='xai'); _call_xai() uses openai SDK at https://api.x.ai/v1; reasoning support (grok-3-mini); xai_api_key settings key. 2) Responses API fallback: _call_openai() catches 'not a chat model'/'v1/completions' error and retries via _call_openai_responses() (client.responses.create with reasoning.effort='high'/'medium'); handles gpt-5.4-pro. 3) Rate-limit handling: _is_rate_limited() added; TokenScribeCallResult.rate_limited field; QueueService raises RateLimitError on rate-limited results; worker catches it and calls QueueModel.requeue_at_end() (delete+reinsert with new auto-increment id so item goes to queue tail; max_retries=10). 4) add-models endpoint: POST /experiments/<id>/add-models on completed/partial/stopped runs; ExperimentModel.get_run_model_ids() and build_llm_payloads_from_snapshot(run_id, model_id, repetitions) build payloads from frozen run_translation_snapshot; QueueModel.get_run_repetitions() reads repetition count. 5) Model catalog update: OpenAI gpt-5.5, gpt-5.5-pro, gpt-5.4-pro, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano; Anthropic claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5; Google gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite; DeepSeek deepseek-v4-pro/flash; Meta Llama-4 Scout/Maverick; Qwen qwen3 family; Mistral magistral-medium/small; xAI grok-3 family. force_magi param added to new experiment form."
+  }
 ]
 ```

@@ -159,7 +159,7 @@ settings
   id, key (UNIQUE), value, updated_at
 
   -- Notable settings keys:
-  -- {provider}_api_key   — API key per provider (openai, anthropic, google, deepseek, meta, qwen, mistral)
+  -- {provider}_api_key   — API key per provider (openai, anthropic, google, deepseek, meta, qwen, mistral, xai)
   --                        values for _ENCRYPTED_KEYS are stored Fernet-encrypted by CryptoService
   -- qwen_region          — "china" (dashscope.aliyuncs.com) | "international" (dashscope-intl.aliyuncs.com)
   -- magi_judge_{name}_id — model_id for Balthasar / Caspar / Melchior
