@@ -327,6 +327,81 @@ def replace_model(run_id: int):
 
 
 # ------------------------------------------------------------------
+# POST /experiments/<id>/add-models  →  accoda nuovi modelli su run esistente
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/add-models", methods=["POST"])
+def add_models(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    run_status = run.get("status", "")
+    if run_status not in ("completed", "partial", "stopped"):
+        flash("Puoi aggiungere modelli solo a run completate, parziali o fermate.", "warning")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    new_model_ids = request.form.getlist("model_ids", type=int)
+    if not new_model_ids:
+        flash("Seleziona almeno un modello da aggiungere.", "warning")
+        return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+    em = _em()
+    qm = _qm()
+
+    existing_ids = em.get_run_model_ids(run_id)
+    repetitions  = qm.get_run_repetitions(run_id)
+
+    added_items = 0
+    skipped: list[str] = []
+
+    for model_id in new_model_ids:
+        if model_id in existing_ids:
+            model = em.get_model_by_id(model_id)
+            skipped.append(model["name"] if model else str(model_id))
+            continue
+
+        model = em.get_model_by_id(model_id)
+        if not model:
+            skipped.append(str(model_id))
+            continue
+
+        payloads = em.build_llm_payloads_from_snapshot(run_id, model_id, repetitions)
+        if not payloads:
+            flash(
+                f"Snapshot mancante o vuoto per {model['name']}: nessun payload generato.",
+                "warning",
+            )
+            continue
+
+        for p in payloads:
+            qm.enqueue(
+                run_id=run_id,
+                operation_type="llm_call",
+                item_key=f"llm:p{p['prompt_id']}:l{p['language_id']}:m{model_id}:r{p['repetition_index']}",
+                payload=p,
+                priority=2,
+            )
+        added_items += len(payloads)
+
+    if skipped:
+        flash(f"Già presenti nella run (saltati): {', '.join(skipped)}.", "info")
+
+    if added_items > 0:
+        qm.update_run_status(run_id, RUN_QUEUED)
+        flash(
+            f"Run #{run_id}: {added_items} chiamate accodate per i nuovi modelli "
+            f"({repetitions} ripetizioni per cella).",
+            "success",
+        )
+    else:
+        flash("Nessuna nuova chiamata accodata.", "info")
+
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
 # POST /experiments/<id>/revalidate-status  →  ricalcola status (fix run con risposte vuote)
 # ------------------------------------------------------------------
 

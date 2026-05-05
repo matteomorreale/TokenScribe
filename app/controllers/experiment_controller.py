@@ -346,8 +346,10 @@ def detail_experiment(run_id: int):
     magi_status = get_magi_status(settings, em)
     queue_items = _qm().get_run_queue(run_id)
     progress    = _qm().get_run_progress(run_id)
-    all_models  = em.get_all_models()
-    run_history = em.get_run_history(run_id)
+    all_models          = em.get_all_models()
+    run_history         = em.get_run_history(run_id)
+    run_model_ids       = em.get_run_model_ids(run_id)
+    detected_repetitions = _qm().get_run_repetitions(run_id)
     is_active = run.get("status") in (RUN_QUEUED, RUN_RUNNING)
     return render_template(
         "experiments/detail.html",
@@ -357,6 +359,8 @@ def detail_experiment(run_id: int):
         progress=progress,
         all_models=all_models,
         run_history=run_history,
+        run_model_ids=run_model_ids,
+        detected_repetitions=detected_repetitions,
         is_active=is_active,
     )
 

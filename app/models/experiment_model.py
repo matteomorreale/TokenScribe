@@ -633,6 +633,123 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def get_run_model_ids(self, run_id: int) -> set[int]:
+        """Restituisce i model_id già presenti nella run (token_results + queue items)."""
+        import json as _json
+        conn = self.db.get_connection()
+        try:
+            ids: set[int] = set()
+            for row in conn.execute(
+                "SELECT DISTINCT model_id FROM token_results WHERE run_id=?", (run_id,)
+            ).fetchall():
+                ids.add(int(row["model_id"]))
+            for row in conn.execute(
+                "SELECT payload FROM run_queue WHERE run_id=? AND operation_type='llm_call'",
+                (run_id,),
+            ).fetchall():
+                p = _json.loads(row["payload"])
+                if mid := p.get("model_id"):
+                    ids.add(int(mid))
+            return ids
+        finally:
+            conn.close()
+
+    def build_llm_payloads_from_snapshot(
+        self, run_id: int, model_id: int, repetitions: int
+    ) -> list[dict]:
+        """Genera payload llm_call per un nuovo modello dal run_translation_snapshot congelato."""
+        conn = self.db.get_connection()
+        try:
+            run_row = conn.execute(
+                "SELECT study_id FROM experiment_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            if not run_row:
+                return []
+            study_id = int(run_row["study_id"])
+
+            model_row = conn.execute(
+                """SELECT m.*, p.name AS provider_name
+                   FROM models m JOIN providers p ON p.id = m.provider_id
+                   WHERE m.id = ?""",
+                (model_id,),
+            ).fetchone()
+            if not model_row:
+                return []
+            model = dict(model_row)
+
+            english_row = conn.execute(
+                "SELECT id, name, code, script_group, morphology_group FROM languages WHERE code='en'"
+            ).fetchone()
+            english_id = int(english_row["id"]) if english_row else None
+
+            snap_rows = conn.execute(
+                """SELECT rts.prompt_id, rts.language_id,
+                          l.name AS language_name, l.code AS language_code,
+                          l.script_group, l.morphology_group,
+                          tc.text
+                   FROM run_translation_snapshot rts
+                   JOIN languages l ON l.id = rts.language_id
+                   JOIN translation_candidates tc ON tc.id = rts.candidate_id
+                   WHERE rts.run_id = ?""",
+                (run_id,),
+            ).fetchall()
+
+            prompt_ids = list({r["prompt_id"] for r in snap_rows})
+
+            def _payload(prompt_id, lang_id, lang_name, lang_code, script_g, morph_g, text, rep):
+                return {
+                    "run_id":           run_id,
+                    "study_id":         study_id,
+                    "prompt_id":        prompt_id,
+                    "language_id":      lang_id,
+                    "language_name":    lang_name,
+                    "language_code":    lang_code,
+                    "script_group":     script_g or "alphabetic",
+                    "morphology_group": morph_g or "",
+                    "model_id":         model_id,
+                    "provider":         model["provider_name"],
+                    "model_name":       model["name"],
+                    "cost_per_input":   float(model.get("cost_per_input_token") or 0.0),
+                    "cost_per_output":  float(model.get("cost_per_output_token") or 0.0),
+                    "is_reasoning":     bool(model.get("is_reasoning", 0)),
+                    "text":             text,
+                    "repetition_index": rep,
+                }
+
+            payloads = []
+            for prompt_id in prompt_ids:
+                prompt_row = conn.execute(
+                    "SELECT base_text FROM prompts WHERE id=?", (prompt_id,)
+                ).fetchone()
+                if not prompt_row:
+                    continue
+
+                if english_row:
+                    for rep in range(repetitions):
+                        payloads.append(_payload(
+                            prompt_id, english_id,
+                            english_row["name"], "en",
+                            english_row["script_group"], english_row["morphology_group"],
+                            prompt_row["base_text"], rep,
+                        ))
+
+                for snap in snap_rows:
+                    if snap["prompt_id"] != prompt_id or snap["language_code"] == "en":
+                        continue
+                    if not snap["text"]:
+                        continue
+                    for rep in range(repetitions):
+                        payloads.append(_payload(
+                            prompt_id, snap["language_id"],
+                            snap["language_name"], snap["language_code"],
+                            snap["script_group"], snap["morphology_group"],
+                            snap["text"], rep,
+                        ))
+
+            return payloads
+        finally:
+            conn.close()
+
     def get_run_history(self, run_id: int) -> list[dict]:
         """Ritorna le voci di storico archiviate per una run."""
         conn = self.db.get_connection()

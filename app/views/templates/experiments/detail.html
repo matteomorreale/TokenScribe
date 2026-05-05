@@ -74,6 +74,77 @@
     </div>
   </div>
 
+  {# ── Griglia LLM calls (visibile solo durante run attiva) ── #}
+  {% if is_active %}
+  {% set llm_q = queue_items | selectattr('operation_type', 'equalto', 'llm_call') | list %}
+  {% if llm_q %}
+  {% set gm = namespace(found=[], data=[]) %}
+  {% set gl = namespace(found=[], data=[]) %}
+  {% for it in llm_q %}
+    {% set p = it.payload or {} %}
+    {% set mid = p.get('model_id')|string %}
+    {% set lid = p.get('language_id')|string %}
+    {% if mid not in gm.found %}
+      {% set _ = gm.found.append(mid) %}
+      {% set _ = gm.data.append({'id': mid, 'name': p.get('model_name','?')}) %}
+    {% endif %}
+    {% if lid not in gl.found %}
+      {% set _ = gl.found.append(lid) %}
+      {% set _ = gl.data.append({'id': lid, 'name': p.get('language_name','?'), 'code': p.get('language_code','??')}) %}
+    {% endif %}
+  {% endfor %}
+  <div style="padding:.25rem 1.25rem .625rem; border-top:1px solid var(--ts-border);">
+    <div style="font-size:.75rem; color:var(--ts-text-muted); margin-bottom:.5rem; display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
+      <span style="font-weight:600;">Chiamate LLM</span>
+      <span style="display:flex; align-items:center; gap:.5rem;">
+        <span class="ts-gcell ts-gc-running" style="width:9px;height:9px;border-radius:2px;"></span><span style="font-size:.68rem;">running</span>
+        <span class="ts-gcell ts-gc-pending"  style="width:9px;height:9px;border-radius:2px; margin-left:.25rem;"></span><span style="font-size:.68rem;">pending</span>
+        <span class="ts-gcell ts-gc-done"     style="width:9px;height:9px;border-radius:2px; margin-left:.25rem;"></span><span style="font-size:.68rem;">done</span>
+        <span class="ts-gcell ts-gc-error"    style="width:9px;height:9px;border-radius:2px; margin-left:.25rem;"></span><span style="font-size:.68rem;">error</span>
+      </span>
+      <span style="font-size:.68rem; color:var(--ts-text-muted); margin-left:auto;">{{ llm_q | selectattr('status','equalto','running') | list | length }} running · {{ llm_q | selectattr('status','equalto','pending') | list | length }} pending</span>
+    </div>
+    <div style="overflow-x:auto; overflow-y:auto; max-height:210px;">
+      <table id="ts-call-grid" style="border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="padding:.1rem .5rem .1rem 0; text-align:left; position:sticky; left:0; top:0; z-index:3; background:var(--ts-card-bg,var(--ts-bg,#0f0f1a)); min-width:100px; font-size:.65rem; color:var(--ts-text-muted); font-weight:normal; border-bottom:1px solid var(--ts-border);">↓ Modello \ Lingua →</th>
+            {% for lang in gl.data %}
+            <th style="padding:.1rem .2rem; text-align:center; font-size:.65rem; color:var(--ts-text-muted); white-space:nowrap; position:sticky; top:0; z-index:2; background:var(--ts-card-bg,var(--ts-bg,#0f0f1a)); border-bottom:1px solid var(--ts-border);" title="{{ lang.name }}">{{ lang.code }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in gm.data %}
+          <tr>
+            <td style="padding:.1rem .5rem .1rem 0; position:sticky; left:0; z-index:1; background:var(--ts-card-bg,var(--ts-bg,#0f0f1a)); font-family:var(--ts-mono); font-size:.66rem; white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis;" title="{{ model.name }}">{{ model.name | truncate(22, true, '…') }}</td>
+            {% for lang in gl.data %}
+            {% set ns = namespace(st='done') %}
+            {% for it in llm_q %}
+              {% set p = it.payload or {} %}
+              {% if p.get('model_id')|string == model.id and p.get('language_id')|string == lang.id %}
+                {% if it.status in ('error','timeout') %}{% set ns.st = 'error' %}
+                {% elif it.status == 'running' and ns.st != 'error' %}{% set ns.st = 'running' %}
+                {% elif it.status == 'pending' and ns.st not in ('error','running') %}{% set ns.st = 'pending' %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            <td style="padding:.08rem .1rem; text-align:center;">
+              <span class="ts-gcell ts-gc-{{ ns.st }}"
+                    data-model-id="{{ model.id }}"
+                    data-lang-id="{{ lang.id }}"
+                    title="{{ model.name }} × {{ lang.name }}: {{ ns.st }}"></span>
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+  {% endif %}
+
   {# Tabella riassuntiva per tipo di operazione #}
   {% if queue_items %}
   <div class="ts-table-wrap" style="max-height:220px; overflow-y:auto;">
@@ -133,8 +204,8 @@
   </div>
   {% endif %}
 
-  {# Azioni resume / retry #}
-  {% if has_errors %}
+  {# Azioni resume / retry — visibile per partial/failed E per stopped con errori #}
+  {% if has_errors or (is_stopped and progress and progress.error > 0) %}
   <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; border-top:1px solid var(--ts-border);">
     <form method="post" action="{{ url_for('run.retry_errors', run_id=run.id) }}">
       <button class="ts-btn ts-btn-primary ts-btn-sm">
@@ -164,16 +235,18 @@
         <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;">Retry selezionati</button>
       </form>
     </details>
+    {% if not is_stopped %}
     <form method="post" action="{{ url_for('run.resume_run', run_id=run.id) }}">
       <button class="ts-btn ts-btn-secondary ts-btn-sm">Riprendi run</button>
     </form>
+    {% endif %}
   </div>
   {% endif %}
 </div>
 {% endif %}
 
 {# ── Gestione Modelli (redo / replace) ──────────────────────────── #}
-{% if run_status in ('completed', 'partial') and results %}
+{% if run_status in ('completed', 'partial', 'stopped') and results %}
 {% set run_models = namespace(seen=[], list=[]) %}
 {% for r in results %}
   {% if r.model_id|string not in run_models.seen %}
@@ -207,6 +280,44 @@
     {% endfor %}
   </div>
 </div>
+{% endif %}
+
+{# ── Aggiungi Modelli ─────────────────────────────────────────────── #}
+{% if run_status in ('completed', 'partial', 'stopped') %}
+{% set addable = namespace(list=[]) %}
+{% for m in all_models %}
+  {% if m.id not in run_model_ids %}
+    {% set _ = addable.list.append(m) %}
+  {% endif %}
+{% endfor %}
+{% if addable.list %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
+    <span class="ts-card-title">Aggiungi Modelli</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">
+      Accoda nuovi AI alla run esistente — {{ detected_repetitions }} ripetizioni per cella (come la run originale)
+    </span>
+  </div>
+  <form method="POST" action="{{ url_for('run.add_models', run_id=run.id) }}">
+    <div style="padding:.75rem 1.25rem 1rem; display:flex; flex-direction:column; gap:.75rem;">
+      <div style="display:flex; flex-wrap:wrap; gap:.5rem;">
+        {% for m in addable.list %}
+        <label style="display:flex; align-items:center; gap:.35rem; font-size:.83rem; cursor:pointer; padding:.3rem .65rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:5px; border:1px solid var(--ts-border,#2d2d3f);">
+          <input type="checkbox" name="model_ids" value="{{ m.id }}" style="accent-color:var(--ts-accent,#6366f1);">
+          <span style="font-family:var(--ts-mono); font-weight:600;">{{ m.name }}</span>
+          <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ m.provider_name }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <div>
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm" data-loading="Accodamento…">
+          Aggiungi alla Run
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endif %}
 {% endif %}
 
 {# ── Storico Archivi ─────────────────────────────────────────────── #}
@@ -442,6 +553,22 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<style>
+.ts-gcell {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  cursor: default;
+  transition: background .25s;
+}
+.ts-gc-pending   { background: var(--ts-border, #2e2e3e); }
+.ts-gc-running   { background: var(--ts-accent, #6366f1); animation: ts-gcpulse 1.1s ease-in-out infinite; }
+.ts-gc-done      { background: var(--ts-success, #22c55e); opacity: .55; }
+.ts-gc-error     { background: var(--ts-danger, #ef4444); }
+.ts-gc-cancelled { background: var(--ts-text-muted, #555); opacity: .35; }
+@keyframes ts-gcpulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+</style>
 <script>
 (function () {
   const RUN_ID   = {{ run.id }};
@@ -526,6 +653,33 @@
             cells[5].title = item.error_message || '';
           }
         });
+      }
+
+      // Aggiorna griglia LLM calls
+      if (data.items) {
+        const CELL_PRIO = { error:0, timeout:0, running:1, pending:2, done:3, cancelled:4 };
+        const cellMap = {};
+        data.items.forEach(item => {
+          if (item.operation_type !== 'llm_call') return;
+          const key = `${item.model_id}_${item.language_id}`;
+          const st = item.status === 'timeout' ? 'error' : item.status;
+          const p = CELL_PRIO[st] ?? 5;
+          if (!(key in cellMap) || p < (CELL_PRIO[cellMap[key]] ?? 5)) cellMap[key] = st;
+        });
+        document.querySelectorAll('.ts-gcell[data-model-id]').forEach(cell => {
+          const key = `${cell.dataset.modelId}_${cell.dataset.langId}`;
+          if (!(key in cellMap)) return;
+          const st = cellMap[key];
+          cell.className = `ts-gcell ts-gc-${st}`;
+          cell.title = cell.title.replace(/: \S+$/, `: ${st}`);
+        });
+        // Aggiorna contatori running/pending nell'header griglia
+        const llmItems = data.items.filter(i => i.operation_type === 'llm_call');
+        const nRunning = llmItems.filter(i => i.status === 'running').length;
+        const nPending  = llmItems.filter(i => i.status === 'pending').length;
+        const gridInfo = document.querySelector('#ts-call-grid')?.closest('div[style*="overflow-x"]')
+                           ?.previousElementSibling?.querySelector('span:last-child');
+        if (gridInfo) gridInfo.textContent = `${nRunning} running · ${nPending} pending`;
       }
 
       // Se la run è terminata, smetti di fare polling e ricarica la pagina

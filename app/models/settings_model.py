@@ -14,6 +14,7 @@ _ENCRYPTED_KEYS = frozenset({
     "meta_api_key",
     "qwen_api_key",
     "mistral_api_key",
+    "xai_api_key",
 })
 
 

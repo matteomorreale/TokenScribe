@@ -3,7 +3,7 @@ TokenScribe — LLM Service
 Author: Matteo Morreale
 
 Unified interface to all supported LLM providers.
-Providers: OpenAI, Anthropic, Google Gemini, DeepSeek, Meta Llama, Qwen, Mistral
+Providers: OpenAI, Anthropic, Google Gemini, DeepSeek, Meta Llama, Qwen, Mistral, xAI (Grok)
 All calls return a TokenScribeCallResult with token counts and cost.
 
 Optional LogService injection: pass log_service= to __init__ to enable non-blocking
@@ -13,6 +13,12 @@ operation logging. Each call records provider, model, tokens, cost, duration, re
 import time
 from dataclasses import dataclass
 from typing import Optional
+
+# Uniform output-token cap applied to all providers.  Individual provider APIs may
+# enforce a lower internal limit, but we always request 4096 so the ceiling is
+# consistent across the experiment.  Reasoning models (OpenAI, DeepSeek) use a
+# separate 8192 path when internal reasoning tokens exhaust the budget.
+MAX_OUTPUT_TOKENS = 4096
 
 
 def _is_not_chat_model(error_str: str) -> bool:
@@ -74,6 +80,7 @@ class LLMService:
     PROVIDER_META = "meta"
     PROVIDER_QWEN = "qwen"
     PROVIDER_MISTRAL = "mistral"
+    PROVIDER_XAI = "xai"
 
     def __init__(self, settings: dict, log_service=None):
         """
@@ -106,6 +113,7 @@ class LLMService:
             self.PROVIDER_META: self._call_meta,
             self.PROVIDER_QWEN: self._call_qwen,
             self.PROVIDER_MISTRAL: self._call_mistral,
+            self.PROVIDER_XAI: self._call_xai,
         }
         handler = dispatch.get(provider)
         if not handler:
@@ -116,7 +124,7 @@ class LLMService:
             return err
 
         t0 = time.monotonic()
-        if provider in (self.PROVIDER_DEEPSEEK, self.PROVIDER_OPENAI):
+        if provider in (self.PROVIDER_DEEPSEEK, self.PROVIDER_OPENAI, self.PROVIDER_XAI):
             result = handler(model_name, prompt_text, is_reasoning=is_reasoning)
         else:
             result = handler(model_name, prompt_text)
@@ -197,8 +205,9 @@ class LLMService:
             client = OpenAI(api_key=api_key)
 
             # Reasoning models consume an internal reasoning budget before producing
-            # visible output. Start with a larger cap so content has room to breathe.
-            max_tok = 4096 if is_reasoning else 512
+            # visible output. Use 8192 for them so content has room to breathe after
+            # the reasoning phase; non-reasoning models get the standard cap.
+            max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
 
             response = client.chat.completions.create(
                 model=model_name,
@@ -208,9 +217,8 @@ class LLMService:
             usage = response.usage
             content = response.choices[0].message.content or "" if response.choices else ""
 
-            # If the budget was exhausted and content is empty, the model consumed all tokens
-            # on internal reasoning. Retry once with a larger cap (guards both the non-flagged
-            # case and the rare case where even 4096 reasoning tokens aren't enough).
+            # If the budget was exhausted and content is still empty the model spent
+            # everything on internal reasoning.  Retry once with a higher cap.
             if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
                 response = client.chat.completions.create(
                     model=model_name,
@@ -276,7 +284,7 @@ class LLMService:
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
                 model=model_name,
-                max_tokens=512,
+                max_tokens=MAX_OUTPUT_TOKENS,
                 messages=[{"role": "user", "content": prompt_text}],
             )
             return TokenScribeCallResult(
@@ -315,7 +323,8 @@ class LLMService:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt_text)
+            generation_config = {"max_output_tokens": MAX_OUTPUT_TOKENS}
+            response = model.generate_content(prompt_text, generation_config=generation_config)
             usage = response.usage_metadata
             thoughts_toks = getattr(usage, "thoughts_token_count", 0) or 0
             visible_toks = usage.candidates_token_count or 0
@@ -344,9 +353,9 @@ class LLMService:
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1",
             )
-            # Reasoning models (e.g. deepseek-v4-pro) consume reasoning tokens from the
-            # shared max_tokens budget. Use a larger cap so output text has room to breathe.
-            max_tokens = 4096 if is_reasoning else 512
+            # Reasoning models consume reasoning tokens from the shared budget; use 8192
+            # so visible output has room after the internal thinking phase.
+            max_tokens = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
@@ -355,9 +364,8 @@ class LLMService:
             usage = response.usage
             content = response.choices[0].message.content or "" if response.choices else ""
 
-            # Some DeepSeek models (e.g. deepseek-v4-flash) have an internal reasoning phase
-            # that consumes tokens before producing visible output. If we hit the cap and
-            # content is empty, retry once with a larger budget.
+            # If we hit the cap with no visible content the model spent everything on
+            # internal reasoning; retry once with a higher budget.
             if not content and usage and usage.completion_tokens >= max_tokens and max_tokens < 8192:
                 response = client.chat.completions.create(
                     model=model_name,
@@ -398,7 +406,7 @@ class LLMService:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
-                max_tokens=512,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
             usage = response.usage
             return TokenScribeCallResult(
@@ -434,7 +442,7 @@ class LLMService:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
-                max_tokens=512,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
             usage = response.usage
             return TokenScribeCallResult(
@@ -461,13 +469,50 @@ class LLMService:
             response = client.chat.complete(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
-                max_tokens=512,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
             usage = response.usage
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
                 response_text=response.choices[0].message.content or "",
+                source="api_reported",
+            )
+        except Exception as e:
+            err = str(e)
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+
+    # ------------------------------------------------------------------
+    # xAI (Grok) — OpenAI-compatible API
+    # ------------------------------------------------------------------
+
+    def _call_xai(self, model_name: str, prompt_text: str, is_reasoning: bool = False) -> TokenScribeCallResult:
+        api_key = self.settings.get("xai_api_key", "")
+        if not api_key:
+            return TokenScribeCallResult(success=False, error="xAI API key not configured")
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.x.ai/v1",
+            )
+            max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt_text}],
+                max_tokens=max_tok,
+            )
+            usage = response.usage
+            content = response.choices[0].message.content or "" if response.choices else ""
+
+            reasoning_toks = 0
+            if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
+                reasoning_toks = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
+            return TokenScribeCallResult(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                reasoning_tokens=reasoning_toks,
+                response_text=content,
                 source="api_reported",
             )
         except Exception as e:

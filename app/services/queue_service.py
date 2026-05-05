@@ -38,7 +38,7 @@ _PROVIDER_KEY_MAP = {
 _TIMEOUTS = {
     "snapshot_translations": 15,
     "magi_phase2":           150,
-    "llm_call":              120,
+    "llm_call":              150,
     "compute_pei":           45,
     "finalize_pei_groups":   30,
 }

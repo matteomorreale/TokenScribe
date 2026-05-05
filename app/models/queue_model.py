@@ -453,6 +453,28 @@ class QueueModel:
     # Recover stale 'running' items after crash/restart
     # ------------------------------------------------------------------
 
+    def get_run_repetitions(self, run_id: int) -> int:
+        """Numero di ripetizioni usate nella run (da token_results; fallback da queue; default 3)."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT MAX(repetition_index) + 1 AS reps FROM token_results WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row and row["reps"]:
+                return int(row["reps"])
+            items = conn.execute(
+                "SELECT payload FROM run_queue WHERE run_id=? AND operation_type='llm_call'",
+                (run_id,),
+            ).fetchall()
+            max_rep = 0
+            for item in items:
+                p = json.loads(item["payload"])
+                max_rep = max(max_rep, int(p.get("repetition_index", 0)))
+            return max_rep + 1 if items else 3
+        finally:
+            conn.close()
+
     def recover_stale_running(self, run_id: int | None = None) -> int:
         """
         All'avvio dell'app resetta a 'pending' tutti gli item rimasti in stato

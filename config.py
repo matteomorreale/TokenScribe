@@ -34,6 +34,7 @@ class TokenScribeConfig:
         "meta",
         "qwen",
         "mistral",
+        "xai",
     ]
 
     # Default models per provider (pre-seeded in DB).
@@ -105,6 +106,13 @@ class TokenScribeConfig:
             {"name": "codestral-latest",        "context_window": 256000, "is_reasoning": False, "cost_per_input_token": 0.3,   "cost_per_output_token": 0.9},
             # --- estimated (*) ---
             {"name": "ministral-8b-latest",     "context_window": 128000, "is_reasoning": False, "cost_per_input_token": 0.1,   "cost_per_output_token": 0.3},
+        ],
+        "xai": [
+            # --- confirmed (x.ai/api#pricing, May 2026) ---
+            {"name": "grok-3",           "context_window": 131072, "is_reasoning": False, "cost_per_input_token": 3.0,  "cost_per_output_token": 15.0},
+            {"name": "grok-3-fast",      "context_window": 131072, "is_reasoning": False, "cost_per_input_token": 5.0,  "cost_per_output_token": 25.0},
+            {"name": "grok-3-mini",      "context_window": 131072, "is_reasoning": True,  "cost_per_input_token": 0.3,  "cost_per_output_token": 0.5},
+            {"name": "grok-3-mini-fast", "context_window": 131072, "is_reasoning": False, "cost_per_input_token": 0.6,  "cost_per_output_token": 4.0},
         ],
     }
 

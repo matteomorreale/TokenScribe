@@ -17,6 +17,7 @@ API_KEY_FIELDS = [
     ("meta_api_key", "Meta (Together AI) API Key"),
     ("qwen_api_key", "Qwen (DashScope) API Key"),
     ("mistral_api_key", "Mistral API Key"),
+    ("xai_api_key", "xAI (Grok) API Key"),
 ]
 
 # Maps provider DB name → settings key for API key
@@ -28,6 +29,7 @@ PROVIDER_KEY_MAP = {
     "meta":      "meta_api_key",
     "qwen":      "qwen_api_key",
     "mistral":   "mistral_api_key",
+    "xai":       "xai_api_key",
 }
 
 MAGI_JUDGE_KEYS = [
