@@ -23,6 +23,7 @@ _PROVIDER_KEY_MAP = {
     "meta":      "meta_api_key",
     "qwen":      "qwen_api_key",
     "mistral":   "mistral_api_key",
+    "xai":       "xai_api_key",
 }
 
 
@@ -43,7 +44,7 @@ def _tm() -> TranslationModel:
 
 
 def _stm() -> SettingsModel:
-    return SettingsModel(current_app.config["DB"])
+    return SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO"))
 
 
 def _ssm() -> SelectionScoreModel:

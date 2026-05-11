@@ -209,6 +209,69 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
 </div>
 {% endif %}
 
+<!-- MAGI Recommendations card -->
+{% if magi_recommendations %}
+{% set has_panel = magi_recommendations | selectattr('magi_score') | list | length > 0 %}
+<div class="ts-card" style="margin-bottom:1.25rem; border-left:3px solid var(--ts-accent);">
+  <div class="ts-card-header" style="gap:.75rem;">
+    <span class="ts-card-title">Raccomandazioni MAGI</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:.5rem;">
+      Miglior candidato per lingua · Phase 1{% if has_panel %} + Phase 2{% endif %}
+    </span>
+  </div>
+  <div class="ts-table-wrap">
+    <table class="ts-table">
+      <thead>
+        <tr>
+          <th>Lingua</th>
+          <th title="Rank globale tra tutti i candidati">Rank</th>
+          <th title="MAGI Selection Score">Score</th>
+          {% if has_panel %}<th title="Panel LLM — media dei 3 giudici">Panel</th>{% endif %}
+          <th>Status</th>
+          <th>Testo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in magi_recommendations %}
+        <tr{% if r.status == 'approved' %} style="background:rgba(var(--ts-accent-rgb,34,197,94),.05);"{% endif %}>
+          <td><strong>{{ r.language_name }}</strong> <span style="color:var(--ts-text-muted);">({{ r.language_code }})</span></td>
+          <td>
+            {% if r.score_rank == 1 %}<span class="ts-badge ts-badge-approved">#1 ★</span>
+            {% elif r.magi_required %}<span class="ts-badge ts-badge-warning">#{{ r.score_rank }}</span>
+            {% else %}#{{ r.score_rank }}{% endif %}
+          </td>
+          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(r.score_absolute) if r.score_absolute is not none else '—' }}</td>
+          {% if has_panel %}
+          <td style="font-variant-numeric:tabular-nums;">
+            {% if r.magi_score is not none %}
+              {{ "%.3f"|format(r.magi_score) }}
+              {% if r.magi_disagreement %}<span title="Disaccordo tra giudici" style="color:var(--ts-warning);">↯</span>{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          {% endif %}
+          <td><span class="ts-badge ts-badge-{{ r.status }}">{{ r.status }}</span></td>
+          <td style="font-size:.78rem; color:var(--ts-text-muted); max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ r.text[:120] if r.text else '—' }}{% if r.text and r.text|length > 120 %}…{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding:.65rem 1rem; border-top:1px solid var(--ts-border); display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <span style="font-size:.8rem; color:var(--ts-text-muted);">
+      MAGI suggerisce questi candidati come migliori per ciascuna lingua. Approvali in blocco o gestiscili singolarmente.
+    </span>
+    <form method="post" action="{{ url_for('translation.bulk_approve_translations', prompt_id=prompt.id) }}" style="margin-left:auto;">
+      <input type="hidden" name="candidate_ids" value="{{ magi_recommendations | map(attribute='candidate_id') | join(',') }}">
+      <button class="ts-btn ts-btn-success ts-btn-sm" type="submit">
+        Approva tutte le raccomandazioni ({{ magi_recommendations|length }})
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% else %}
 <div class="ts-empty">
   <div class="ts-empty-title">No candidates yet</div>
@@ -219,7 +282,7 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
 <!-- MAGI System Modal -->
 {% if candidates %}
 <div id="magi-modal" class="ts-modal">
-  <div class="ts-modal-content" style="max-width:760px; width:95%;">
+  <div class="ts-modal-content" style="max-width:680px; width:95%;">
     <div class="ts-modal-header">
       <div>
         <h2 class="ts-modal-title">MAGI System</h2>
@@ -271,54 +334,39 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
           </div>
         </div>
 
-        <!-- Phase 2 judges -->
+        <!-- Phase 2 -->
         <div style="border-top:1px solid var(--ts-border); padding-top:1rem;">
-          <div style="display:flex; align-items:center; gap:.75rem; margin-bottom:.75rem;">
-            <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer; font-weight:600; font-size:.9rem;">
-              <input type="checkbox" id="force-magi-toggle" name="force_magi" value="1" onchange="toggleJudges(this)">
-              Attiva Phase 2 — Panel dei giudici MAGI
+          {% if magi_status and magi_status.active_count == 3 %}
+          <label style="display:flex; align-items:center; gap:.6rem; cursor:pointer; font-weight:600; font-size:.9rem; margin-bottom:.6rem;">
+            <input type="checkbox" id="run-phase2-toggle" name="run_phase2" value="1" onchange="togglePhase2(this)">
+            Esegui Phase 2 — Panel dei giudici
+          </label>
+          <div id="phase2-section" style="display:none; padding:.75rem; background:var(--ts-surface-2); border-radius:var(--ts-radius); border:1px solid var(--ts-border);">
+            <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.6rem;">
+              Ogni giudice valuta indipendentemente i candidati (semantic fidelity, register match, naturalness 1–5).
+              Il consensus è la media dei punteggi; ↯ segnala disaccordo (stdev &gt; 0.15).
+            </p>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:.5rem; margin-bottom:.75rem;">
+              {% for j in magi_status.judges %}
+              <div style="padding:.4rem .6rem; background:var(--ts-surface); border-radius:var(--ts-radius); border:1px solid var(--ts-border); font-size:.78rem;">
+                <div style="color:var(--ts-text-muted); margin-bottom:.1rem;">{{ j.name | capitalize }}</div>
+                <strong>{{ j.model_name or '—' }}</strong>
+                <span style="color:var(--ts-success); margin-left:.3rem;">✓</span>
+              </div>
+              {% endfor %}
+            </div>
+            <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer; font-size:.82rem;">
+              <input type="checkbox" name="force_magi" value="1">
+              Forza Phase 2 su tutti i candidati (non solo quelli con MAGI? = sì)
             </label>
           </div>
-          <div id="judges-section" style="display:none; padding:.75rem; background:var(--ts-surface-2); border-radius:var(--ts-radius); border:1px solid var(--ts-border);">
-            <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.75rem;">
-              Seleziona tre modelli come giudici. Ogni giudice valuterà indipendentemente i candidati
-              e assegnerà uno score 0–1. Il consensus è la media; ↯ segnala disaccordo (stdev &gt; 0.15).
-              <br>Se non forzato, solo i candidati con MAGI?=sì vengono sottoposti al panel.
-            </p>
-            {% if all_models %}
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:.75rem;">
-              <div>
-                <label class="ts-label" style="font-size:.8rem;">Balthasar (giudice 1)</label>
-                <select class="ts-select" name="judge_balthasar" style="font-size:.82rem;">
-                  <option value="">— scegli modello —</option>
-                  {% for m in all_models %}
-                  <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div>
-                <label class="ts-label" style="font-size:.8rem;">Caspar (giudice 2)</label>
-                <select class="ts-select" name="judge_caspar" style="font-size:.82rem;">
-                  <option value="">— scegli modello —</option>
-                  {% for m in all_models %}
-                  <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div>
-                <label class="ts-label" style="font-size:.8rem;">Melchior (giudice 3)</label>
-                <select class="ts-select" name="judge_melchior" style="font-size:.82rem;">
-                  <option value="">— scegli modello —</option>
-                  {% for m in all_models %}
-                  <option value="{{ m.id }}">{{ m.provider_name }} / {{ m.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-            </div>
-            {% else %}
-            <p style="color:var(--ts-text-muted); font-size:.82rem;">Nessun modello configurato. Vai in Settings per aggiungerne.</p>
-            {% endif %}
+          {% else %}
+          <div style="padding:.6rem .75rem; background:var(--ts-surface-2); border-radius:var(--ts-radius); border:1px solid var(--ts-border); font-size:.82rem; color:var(--ts-text-muted);">
+            <strong style="color:var(--ts-warning);">Phase 2 non disponibile</strong>
+            {% if magi_status %}— {{ magi_status.tooltip }}.{% endif %}
+            Configura i 3 giudici in <a href="/settings" style="color:var(--ts-accent);">Impostazioni →</a>
           </div>
+          {% endif %}
         </div>
 
       </div><!-- modal-body -->
@@ -377,9 +425,10 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
     magiUpdateIds();
   }
 
-  // Judge toggle
-  function toggleJudges(el) {
-    document.getElementById('judges-section').style.display = el.checked ? 'block' : 'none';
+  // Phase 2 toggle
+  function togglePhase2(el) {
+    const sec = document.getElementById('phase2-section');
+    if (sec) sec.style.display = el.checked ? 'block' : 'none';
   }
 
   // Init

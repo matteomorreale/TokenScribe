@@ -41,12 +41,18 @@ class CryptoService:
         return self._fernet.encrypt(value.encode()).decode()
 
     def decrypt(self, value: str) -> str:
-        """Decrypt a Fernet token. Returns the value unchanged if it is not a
-        valid token (transparent migration path for pre-encryption plain-text
-        values already stored in the database)."""
+        """Decrypt a Fernet token. Returns the value unchanged for legacy
+        plain-text values stored before encryption was introduced. Returns ""
+        for Fernet tokens that can't be decrypted (key mismatch), so callers
+        treat them as "not configured" rather than forwarding the raw token."""
         if not value:
             return value
         try:
             return self._fernet.decrypt(value.encode()).decode()
         except (InvalidToken, Exception):
+            # Fernet tokens start with gAAAAAB — if decryption fails on one,
+            # the encryption key has changed; return empty so the API call
+            # fails with "key not configured" instead of using a garbage value.
+            if value.startswith("gAAAAAB"):
+                return ""
             return value

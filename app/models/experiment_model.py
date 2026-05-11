@@ -634,7 +634,14 @@ class ExperimentModel:
             conn.close()
 
     def get_run_model_ids(self, run_id: int) -> set[int]:
-        """Restituisce i model_id già presenti nella run (token_results + queue items)."""
+        """Restituisce i model_id presenti nella run.
+
+        Fonti:
+        - token_results: modelli con almeno un risultato (completati o in retry)
+        - run_queue: modelli con item attivi (pending/running/error/timeout) ma ancora
+          senza risultati (es. appena aggiunti). Esclude done e cancelled: i done sono
+          già in token_results; se non ci sono, il modello è stato sostituito/cancellato.
+        """
         import json as _json
         conn = self.db.get_connection()
         try:
@@ -644,7 +651,9 @@ class ExperimentModel:
             ).fetchall():
                 ids.add(int(row["model_id"]))
             for row in conn.execute(
-                "SELECT payload FROM run_queue WHERE run_id=? AND operation_type='llm_call'",
+                """SELECT payload FROM run_queue
+                   WHERE run_id=? AND operation_type='llm_call'
+                   AND status NOT IN ('done', 'cancelled')""",
                 (run_id,),
             ).fetchall():
                 p = _json.loads(row["payload"])

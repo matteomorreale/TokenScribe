@@ -8,11 +8,27 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response
 from app.models import PromptModel, TranslationModel, StudyModel, SettingsModel, ExperimentModel, SelectionScoreModel
-from app.services import ScoringService, LLMService, MAGIService
+from app.services import ScoringService, LLMService, MAGIService, get_magi_status as _get_magi_status
 
 translation_bp = Blueprint("translation", __name__)
 
 _scorer = ScoringService()
+
+
+def _compute_magi_recommendations(magi_scores: list) -> list:
+    """For each language, pick the candidate with the highest score_absolute."""
+    by_lang: dict = {}
+    for s in magi_scores:
+        lid = s.get("language_id")
+        if lid is None:
+            continue
+        by_lang.setdefault(lid, []).append(s)
+    recommendations = []
+    for candidates in by_lang.values():
+        best = max(candidates, key=lambda c: (c.get("score_absolute") or -999.0))
+        recommendations.append(best)
+    recommendations.sort(key=lambda r: r.get("language_name") or "")
+    return recommendations
 
 
 def _pm() -> PromptModel:
@@ -27,7 +43,7 @@ def _sm() -> StudyModel:
     return StudyModel(current_app.config["DB"])
 
 def _setm() -> SettingsModel:
-    return SettingsModel(current_app.config["DB"])
+    return SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO"))
 
 def _parse_candidate_ids() -> list[int]:
     raw_list = request.form.getlist("candidate_ids")
@@ -63,7 +79,7 @@ def list_translations(prompt_id: int):
     study = _sm().get_by_id(prompt["study_id"])
     candidates = _tm().get_candidates_by_prompt(prompt_id)
     languages = _tm().get_all_languages()
-    all_models = ExperimentModel(current_app.config["DB"]).get_all_models()
+    em = ExperimentModel(current_app.config["DB"])
     magi_scores = SelectionScoreModel(current_app.config["DB"]).get_by_prompt(prompt_id)
     magi_by_cid = {s["candidate_id"]: s for s in magi_scores}
     for c in candidates:
@@ -71,14 +87,18 @@ def list_translations(prompt_id: int):
         c["score_absolute"] = ms["score_absolute"] if ms else None
         c["score_rank"] = ms["score_rank"] if ms else None
         c["magi_required"] = bool(ms["magi_required"]) if ms else None
+    settings = _setm().get_all()
+    magi_status = _get_magi_status(settings, em)
+    magi_recommendations = _compute_magi_recommendations(magi_scores)
     return render_template(
         "translations/list.html",
         prompt=prompt,
         study=study,
         candidates=candidates,
         languages=languages,
-        all_models=all_models,
         magi_results=magi_scores,
+        magi_status=magi_status,
+        magi_recommendations=magi_recommendations,
     )
 
 
@@ -454,18 +474,17 @@ def ai_translate(prompt_id: int):
     created = 0
     for lang in langs:
         lid = lang["id"]
-        cand = accepted_selection.get(lid)
-        if not cand:
-            continue
-        translation_text = cand["translation"]
-        scores = cand["scores"]
-        cid = tm.create_candidate(prompt_id, lid, translation_text)
-        tm.upsert_score(cid, scores["dsf"], scores["rtf"], scores["sfs"],
-                        scores.get("ler_char"), scores.get("ler_token"))
-        created += 1
-
-        if float(scores["sfs"]) < sfs_min:
-            warnings.append(f"{lang['name']}: best SFS {float(scores['sfs']):.4f} < {sfs_min:.4f}")
+        pool = pools_by_lang.get(lid, [])
+        for cand in pool:
+            translation_text = cand["translation"]
+            scores = cand["scores"]
+            cid = tm.create_candidate(prompt_id, lid, translation_text)
+            tm.upsert_score(cid, scores["dsf"], scores["rtf"], scores["sfs"],
+                            scores.get("ler_char"), scores.get("ler_token"))
+            created += 1
+        best = _pick_best_by_sfs(pool)
+        if best and float(best["scores"]["sfs"]) < sfs_min:
+            warnings.append(f"{lang['name']}: best SFS {float(best['scores']['sfs']):.4f} < {sfs_min:.4f}")
 
     if created:
         if accepted_pei is None:
@@ -616,21 +635,23 @@ def compute_selection_scores(prompt_id: int):
     ssm.upsert_scores(result)
 
     # Phase 2 — MAGI judge panel
+    run_phase2 = request.form.get("run_phase2") == "1"
     force_magi = request.form.get("force_magi") == "1"
+    settings = _setm().get_all()
+    em = ExperimentModel(current_app.config["DB"])
     judge_ids = [
-        request.form.get("judge_balthasar", type=int),
-        request.form.get("judge_caspar", type=int),
-        request.form.get("judge_melchior", type=int),
+        settings.get("magi_judge_balthasar_id"),
+        settings.get("magi_judge_caspar_id"),
+        settings.get("magi_judge_melchior_id"),
     ]
-    judge_models = [em.get_model_by_id(mid) for mid in judge_ids if mid]
+    judge_models = [em.get_model_by_id(int(mid)) for mid in judge_ids if mid]
     judge_models = [m for m in judge_models if m]
 
     panel_ran = 0
     magi_went_offline = False
-    if len(judge_models) == 3:
+    if run_phase2 and len(judge_models) == 3:
         panel_candidates = result if force_magi else [c for c in result if c.get("magi_required")]
         if panel_candidates:
-            settings = _setm().get_all()
             log_svc_magi = current_app.config.get("LOG_SERVICE")
             llm = LLMService(settings, log_service=log_svc_magi)
             magi_svc = MAGIService()
@@ -677,10 +698,10 @@ def compute_selection_scores(prompt_id: int):
         msg += f" · Phase 2: MAGI offline dopo {panel_ran} candidati"
     elif panel_ran:
         msg += f" · Phase 2: {panel_ran} candidati valutati dai giudici"
-    elif len(judge_models) == 3 and not panel_ran:
+    elif run_phase2 and len(judge_models) == 3:
         msg += " · Phase 2: nessun candidato richiede i giudici"
-    elif force_magi and len(judge_models) < 3:
-        msg += " · Phase 2: seleziona 3 modelli giudice per attivare il panel"
+    elif run_phase2 and len(judge_models) < 3:
+        msg += " · Phase 2: configura 3 giudici nelle Impostazioni"
     flash(msg, "success" if not magi_went_offline else "warning")
     return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
 

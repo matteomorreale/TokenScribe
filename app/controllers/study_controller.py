@@ -28,7 +28,7 @@ def list_studies():
         s["prompt_count"] = model.get_prompt_count(s["id"])
         s["run_count"] = model.get_run_count(s["id"])
     from app.models import SettingsModel, ExperimentModel
-    settings = SettingsModel(current_app.config["DB"]).get_all()
+    settings = SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO")).get_all()
     em = ExperimentModel(current_app.config["DB"])
     magi_status = get_magi_status(settings, em)
     return render_template("studies/list.html", studies=studies, magi_status=magi_status)
@@ -59,11 +59,11 @@ def detail_study(study_id: int):
     em = ExperimentModel(current_app.config["DB"])
     prompts = PromptModel(current_app.config["DB"]).get_by_study(study_id)
     runs = em.get_runs_by_study(study_id)
-    settings = SettingsModel(current_app.config["DB"]).get_all()
+    settings = SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO")).get_all()
     magi_status = get_magi_status(settings, em)
     prompt_ids = [p["id"] for p in prompts]
     readiness = SelectionScoreModel(current_app.config["DB"]).get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
-    judge_ids = SettingsModel(current_app.config["DB"]).get_magi_judge_ids()
+    judge_ids = SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO")).get_magi_judge_ids()
     judges_ok = all(judge_ids) and len(judge_ids) == 3
     return render_template(
         "studies/detail.html", study=study, prompts=prompts, runs=runs,
@@ -216,7 +216,7 @@ def regen_magi(study_id: int):
     em = ExperimentModel(db)
     tm = TranslationModel(db)
     ssm = SelectionScoreModel(db)
-    stm = SettingsModel(db)
+    stm = SettingsModel(db, crypto=current_app.config.get("CRYPTO"))
     qm = QueueModel(db)
 
     # Determine which prompts to regenerate

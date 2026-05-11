@@ -246,14 +246,23 @@
 {% endif %}
 
 {# ── Gestione Modelli (redo / replace) ──────────────────────────── #}
-{% if run_status in ('completed', 'partial', 'stopped') and results %}
+{% if run_model_ids %}
 {% set run_models = namespace(seen=[], list=[]) %}
+{# Prima i modelli con risultati completati #}
 {% for r in results %}
   {% if r.model_id|string not in run_models.seen %}
     {% set _ = run_models.seen.append(r.model_id|string) %}
-    {% set _ = run_models.list.append({'model_id': r.model_id, 'model_name': r.model_name, 'provider_name': r.provider_name}) %}
+    {% set _ = run_models.list.append({'model_id': r.model_id, 'model_name': r.model_name, 'provider_name': r.provider_name, 'queued_only': false}) %}
   {% endif %}
 {% endfor %}
+{# Poi i modelli in coda senza risultati ancora (es. appena aggiunti) #}
+{% for m in all_models %}
+  {% if m.id in run_model_ids and m.id|string not in run_models.seen %}
+    {% set _ = run_models.seen.append(m.id|string) %}
+    {% set _ = run_models.list.append({'model_id': m.id, 'model_name': m.name, 'provider_name': m.provider_name, 'queued_only': true}) %}
+  {% endif %}
+{% endfor %}
+{% if run_models.list %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
     <span class="ts-card-title">Gestione Modelli</span>
@@ -265,21 +274,34 @@
     <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; padding:.5rem .75rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:6px;">
       <span style="font-family:var(--ts-mono); font-size:.83rem; font-weight:600;">{{ m.model_name }}</span>
       <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ m.provider_name }}</span>
-      <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ model_results|length }} risultati</span>
-      <div style="margin-left:auto; display:flex; gap:.4rem;">
-        <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
-                onclick="openRedoModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
-          Rifai
-        </button>
-        <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
-                onclick="openReplaceModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
-          Sostituisci
-        </button>
-      </div>
+      {% if m.queued_only %}
+        <span class="ts-badge ts-badge-pending">in coda</span>
+        <div style="margin-left:auto; display:flex; gap:.4rem;">
+          <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
+                  onclick="openReplaceModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
+            Sostituisci
+          </button>
+        </div>
+      {% else %}
+        <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ model_results|length }} risultati</span>
+        {% if run_status in ('completed', 'partial', 'stopped') %}
+        <div style="margin-left:auto; display:flex; gap:.4rem;">
+          <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
+                  onclick="openRedoModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
+            Rifai
+          </button>
+          <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
+                  onclick="openReplaceModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
+            Sostituisci
+          </button>
+        </div>
+        {% endif %}
+      {% endif %}
     </div>
     {% endfor %}
   </div>
 </div>
+{% endif %}
 {% endif %}
 
 {# ── Aggiungi Modelli ─────────────────────────────────────────────── #}

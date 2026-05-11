@@ -305,7 +305,7 @@ class QueueService:
             is_reasoning=is_reasoning,
             _ctx=llm_ctx,
         )
-        if not result.success and result.rate_limited:
+        if not result.success and (result.rate_limited or result.timed_out):
             raise RateLimitError(result.error)
 
         if not result.success and result.model_not_found:
@@ -326,7 +326,7 @@ class QueueService:
                 )
                 if result.success:
                     model_id = fallback["id"]
-                elif result.rate_limited:
+                elif result.rate_limited or result.timed_out:
                     raise RateLimitError(result.error)
 
         # model_id is now final (possibly updated to fallback). attempt_index is
@@ -348,7 +348,13 @@ class QueueService:
             raise RuntimeError(f"LLM call failed: {result.error}")
 
         visible_output_tokens = result.output_tokens - result.reasoning_tokens
-        is_valid = bool((result.response_text or "").strip()) and visible_output_tokens > 0
+        has_text = bool((result.response_text or "").strip())
+        # Some xAI models report reasoning_tokens == completion_tokens even when
+        # there is visible output, leaving visible_output_tokens at 0.  Fall back
+        # to the total output tokens so the result is not discarded.
+        if has_text and visible_output_tokens <= 0 and result.output_tokens > 0:
+            visible_output_tokens = result.output_tokens
+        is_valid = has_text
 
         em.insert_token_result(
             run_id=run_id,

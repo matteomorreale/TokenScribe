@@ -109,10 +109,16 @@ class TokenScribeConfig:
         ],
         "xai": [
             # --- confirmed (x.ai/api#pricing, May 2026) ---
-            {"name": "grok-3",           "context_window": 131072, "is_reasoning": False, "cost_per_input_token": 3.0,  "cost_per_output_token": 15.0},
-            {"name": "grok-3-fast",      "context_window": 131072, "is_reasoning": False, "cost_per_input_token": 5.0,  "cost_per_output_token": 25.0},
-            {"name": "grok-3-mini",      "context_window": 131072, "is_reasoning": True,  "cost_per_input_token": 0.3,  "cost_per_output_token": 0.5},
-            {"name": "grok-3-mini-fast", "context_window": 131072, "is_reasoning": False, "cost_per_input_token": 0.6,  "cost_per_output_token": 4.0},
+            {"name": "grok-4.3",                        "context_window": 1000000, "is_reasoning": False, "cost_per_input_token": 1.25, "cost_per_output_token": 2.5},
+            {"name": "grok-4.20-multi-agent-0309",      "context_window": 2000000, "is_reasoning": False, "cost_per_input_token": 1.25, "cost_per_output_token": 2.5},
+            {"name": "grok-4.20-0309-reasoning",        "context_window": 2000000, "is_reasoning": True,  "cost_per_input_token": 1.25, "cost_per_output_token": 2.5},
+            {"name": "grok-4.20-0309-non-reasoning",    "context_window": 2000000, "is_reasoning": False, "cost_per_input_token": 1.25, "cost_per_output_token": 2.5},
+            {"name": "grok-4-1-fast-reasoning",         "context_window": 2000000, "is_reasoning": True,  "cost_per_input_token": 0.2,  "cost_per_output_token": 0.5},
+            {"name": "grok-4-1-fast-non-reasoning",     "context_window": 2000000, "is_reasoning": False, "cost_per_input_token": 0.2,  "cost_per_output_token": 0.5},
+            {"name": "grok-3",                          "context_window": 131072,  "is_reasoning": False, "cost_per_input_token": 3.0,  "cost_per_output_token": 15.0},
+            {"name": "grok-3-fast",                     "context_window": 131072,  "is_reasoning": False, "cost_per_input_token": 5.0,  "cost_per_output_token": 25.0},
+            {"name": "grok-3-mini",                     "context_window": 131072,  "is_reasoning": True,  "cost_per_input_token": 0.3,  "cost_per_output_token": 0.5},
+            {"name": "grok-3-mini-fast",                "context_window": 131072,  "is_reasoning": False, "cost_per_input_token": 0.6,  "cost_per_output_token": 4.0},
         ],
     }
 

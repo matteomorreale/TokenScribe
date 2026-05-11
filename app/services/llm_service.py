@@ -52,6 +52,17 @@ def _is_rate_limited(error_str: str) -> bool:
     )
 
 
+def _is_timeout(error_str: str) -> bool:
+    s = error_str.lower()
+    return (
+        "timed out" in s
+        or "timeout" in s
+        or "readtimeout" in s
+        or "connecttimeout" in s
+        or "read operation timed out" in s
+    )
+
+
 @dataclass
 class TokenScribeCallResult:
     """Result of a single LLM API call."""
@@ -65,6 +76,7 @@ class TokenScribeCallResult:
     success: bool = True
     model_not_found: bool = False
     rate_limited: bool = False
+    timed_out: bool = False
 
 
 class LLMService:
@@ -242,7 +254,7 @@ class LLMService:
             err = str(e)
             if _is_not_chat_model(err):
                 return self._call_openai_responses(api_key, model_name, prompt_text, is_reasoning)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     def _call_openai_responses(self, api_key: str, model_name: str, prompt_text: str, is_reasoning: bool) -> TokenScribeCallResult:
         """Fallback for models only available on the Responses API (e.g. gpt-5.4-pro)."""
@@ -269,7 +281,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # Anthropic
@@ -295,7 +307,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # Google Gemini
@@ -337,7 +349,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # DeepSeek (OpenAI-compatible API)
@@ -387,7 +399,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # Meta Llama (via Together AI consumer API)
@@ -417,7 +429,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # Qwen (via Alibaba Cloud DashScope — OpenAI-compatible)
@@ -453,7 +465,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # Mistral
@@ -480,7 +492,7 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # xAI (Grok) — OpenAI-compatible API
@@ -517,4 +529,4 @@ class LLMService:
             )
         except Exception as e:
             err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err))
+            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
