@@ -304,6 +304,24 @@
 {% endif %}
 {% endif %}
 
+{# ── Ricalcola token visibili ──────────────────────────────────────── #}
+{% if run_status in ('completed', 'partial', 'stopped') %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div style="padding:.65rem 1.25rem; display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
+    <span style="font-size:.83rem; color:var(--ts-text-muted);">
+      <strong style="color:var(--ts-text);">Ricalcola token visibili</strong>
+      — corregge <code>visible_output_tokens</code> e <code>ror</code> per run con provider
+      che nascondono reasoning tokens nel conteggio API (es. Qwen).
+    </span>
+    <form method="post" action="{{ url_for('run.recompute_tokens', run_id=run.id) }}" style="margin-left:auto;">
+      <button type="submit" class="ts-btn ts-btn-sm ts-btn-secondary">
+        ⟳ Ricalcola token visibili
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {# ── Aggiungi Modelli ─────────────────────────────────────────────── #}
 {% if run_status in ('completed', 'partial', 'stopped') %}
 {% set addable = namespace(list=[]) %}

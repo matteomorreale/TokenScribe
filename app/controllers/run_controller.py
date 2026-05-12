@@ -418,6 +418,38 @@ def update_notes(run_id: int):
 
 
 # ------------------------------------------------------------------
+# POST /experiments/<id>/recompute-tokens  →  ricalcola visible_output_tokens
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/recompute-tokens", methods=["POST"])
+def recompute_tokens(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    summary = _em().recompute_visible_tokens(run_id)
+
+    if "error" in summary:
+        flash(f"Impossibile ricalcolare: {summary['error']}.", "error")
+    elif summary["updated"] == 0:
+        flash(
+            f"Run #{run_id}: nessuna riga richiedeva correzione "
+            f"({summary['checked']} esaminate).",
+            "info",
+        )
+    else:
+        flash(
+            f"Run #{run_id}: {summary['updated']} righe aggiornate su "
+            f"{summary['checked']} esaminate "
+            f"(saltate senza tiktoken: {summary['skipped']}).",
+            "success",
+        )
+
+    return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
 # POST /experiments/<id>/revalidate-status  →  ricalcola status (fix run con risposte vuote)
 # ------------------------------------------------------------------
 

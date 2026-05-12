@@ -4,6 +4,7 @@ Author: Matteo Morreale
 """
 
 import logging
+from dataclasses import dataclass, field
 
 from .database import DatabaseManager
 from config import TokenScribeConfig
@@ -898,5 +899,102 @@ class ExperimentModel:
                         d["magi_judges"] = None
                 result.append(d)
             return result
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Retroactive visible-token recomputation
+    # ------------------------------------------------------------------
+
+    def recompute_visible_tokens(self, run_id: int) -> dict:
+        """Reapply the inflated-API-count heuristic to already-stored results.
+
+        For each successful token_result in the run, checks whether
+        api_reported_output_tokens / max(1, len(response_text)) exceeds the
+        plausibility ceiling (2.0 for alphabetic scripts, 1.5 for logographic).
+        When it does, visible_output_tokens is overwritten with a local tiktoken
+        cl100k_base count.
+
+        Returns a summary dict with keys:
+          checked   – number of rows examined
+          updated   – number of rows rewritten
+          skipped   – rows where local tiktoken returned 0 (tiktoken not installed
+                      or empty text) — kept at old value
+          unchanged – rows that passed the heuristic
+        """
+        try:
+            import tiktoken as _tiktoken
+            _enc = _tiktoken.get_encoding("cl100k_base")
+
+            def _local_count(text: str) -> int:
+                return len(_enc.encode(text)) if text else 0
+        except Exception:
+            return {"checked": 0, "updated": 0, "skipped": 0, "unchanged": 0,
+                    "error": "tiktoken not available"}
+
+        _LOGO = {"zh", "ja", "ko", "yue", "wuu", "hak", "nan"}
+
+        def _is_logo(code: str) -> bool:
+            c = (code or "").lower()
+            return c[:2] in _LOGO or c[:3].rstrip("-") in _LOGO
+
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT tr.id,
+                          COALESCE(tr.api_reported_output_tokens,
+                                   CASE WHEN tr.source='api_reported' THEN tr.output_tokens END)
+                              AS arot,
+                          tr.response_text,
+                          l.code AS language_code
+                   FROM token_results tr
+                   JOIN languages l ON l.id = tr.language_id
+                   WHERE tr.run_id = ? AND tr.attempt_status = 'success'""",
+                (run_id,),
+            ).fetchall()
+
+            checked = len(rows)
+            updated = skipped = unchanged = 0
+            updates: list[tuple[int, int]] = []
+
+            for r in rows:
+                arot = r["arot"] or 0
+                text = r["response_text"] or ""
+                char_len = max(1, len(text))
+
+                if arot <= 0 or not text.strip():
+                    unchanged += 1
+                    continue
+
+                threshold = 1.5 if _is_logo(r["language_code"]) else 2.0
+                if arot / char_len <= threshold:
+                    unchanged += 1
+                    continue
+
+                local_toks = _local_count(text)
+                if local_toks <= 0:
+                    skipped += 1
+                    continue
+
+                updates.append((local_toks, r["id"]))
+                updated += 1
+
+            if updates:
+                conn.executemany(
+                    "UPDATE token_results SET visible_output_tokens=? WHERE id=?",
+                    updates,
+                )
+                conn.commit()
+                _log.info(
+                    "recompute_visible_tokens run=%d: updated=%d skipped=%d unchanged=%d",
+                    run_id, updated, skipped, unchanged,
+                )
+
+            return {
+                "checked": checked,
+                "updated": updated,
+                "skipped": skipped,
+                "unchanged": unchanged,
+            }
         finally:
             conn.close()
