@@ -45,6 +45,25 @@ _TIMEOUTS = {
 
 _POLL_INTERVAL = 2  # secondi tra un poll e il successivo quando la coda è vuota
 
+# Language codes whose scripts are logographic (CJK + related).
+# Used to pick the right suspicion threshold for inflated API token counts.
+_LOGOGRAPHIC_PREFIXES = {"zh", "ja", "ko", "yue", "wuu", "hak", "nan"}
+
+
+def _is_logographic(language_code: str) -> bool:
+    return (language_code or "").lower()[:3].rstrip("-") in _LOGOGRAPHIC_PREFIXES or \
+           (language_code or "").lower()[:2] in _LOGOGRAPHIC_PREFIXES
+
+
+def _local_visible_token_count(text: str) -> int:
+    """Count tokens in *text* with tiktoken cl100k_base as a provider-neutral proxy."""
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:
+        return 0
+
 
 class QueueService:
     """
@@ -347,13 +366,46 @@ class QueueService:
             )
             raise RuntimeError(f"LLM call failed: {result.error}")
 
-        visible_output_tokens = result.output_tokens - result.reasoning_tokens
         has_text = bool((result.response_text or "").strip())
-        # Some xAI models report reasoning_tokens == completion_tokens even when
-        # there is visible output, leaving visible_output_tokens at 0.  Fall back
-        # to the total output tokens so the result is not discarded.
-        if has_text and visible_output_tokens <= 0 and result.output_tokens > 0:
-            visible_output_tokens = result.output_tokens
+        response_text = result.response_text or ""
+        char_len = len(response_text)
+        api_output = result.output_tokens
+        lang_code = payload.get("language_code", "")
+
+        # Sanity-check: if tokens-per-character exceeds a plausibility ceiling the
+        # provider is bundling undisclosed reasoning tokens into completion_tokens.
+        # This is known for Qwen reasoning models but the check is provider-agnostic
+        # so any future offender is caught automatically.
+        # Ceilings: alphabetic scripts ~4 chars/token → 2.0 tok/char is already 2×
+        # the worst-case; logographic scripts (CJK) are denser → 1.5 tok/char.
+        _use_local = False
+        if has_text and char_len > 0 and api_output > 0:
+            tpc = api_output / char_len
+            threshold = 1.5 if _is_logographic(lang_code) else 2.0
+            if tpc > threshold:
+                _use_local = True
+                logger.warning(
+                    "Inflated API token count detected: provider=%s model=%s "
+                    "lang=%s api_output=%d char_len=%d tpc=%.2f threshold=%.1f — "
+                    "recomputing visible_output_tokens via tiktoken",
+                    payload.get("provider", "?"), payload.get("model_name", "?"),
+                    lang_code or "?", api_output, char_len, tpc, threshold,
+                )
+
+        if _use_local:
+            local_toks = _local_visible_token_count(response_text)
+            if local_toks > 0:
+                visible_output_tokens = local_toks
+                result.reasoning_tokens = max(0, api_output - local_toks)
+            else:
+                visible_output_tokens = max(0, api_output - result.reasoning_tokens)
+        else:
+            visible_output_tokens = api_output - result.reasoning_tokens
+            # Some xAI models report reasoning_tokens == completion_tokens even
+            # when there is visible output; fall back to the total.
+            if has_text and visible_output_tokens <= 0 and api_output > 0:
+                visible_output_tokens = api_output
+
         is_valid = has_text
 
         em.insert_token_result(

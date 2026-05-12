@@ -21,6 +21,12 @@ from typing import Optional
 MAX_OUTPUT_TOKENS = 4096
 
 
+def _openai_supports_reasoning_effort(model_name: str) -> bool:
+    """True for OpenAI models that accept the reasoning_effort parameter."""
+    mn = model_name.lower()
+    return mn.startswith(("o1", "o3", "o4")) or "gpt-5" in mn
+
+
 def _is_not_chat_model(error_str: str) -> bool:
     s = error_str.lower()
     return "not a chat model" in s or "v1/completions" in s
@@ -221,22 +227,23 @@ class LLMService:
             # the reasoning phase; non-reasoning models get the standard cap.
             max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
 
-            response = client.chat.completions.create(
+            call_kwargs: dict = dict(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
                 max_completion_tokens=max_tok,
             )
+            if _openai_supports_reasoning_effort(model_name):
+                call_kwargs["reasoning_effort"] = "high" if is_reasoning else "low"
+
+            response = client.chat.completions.create(**call_kwargs)
             usage = response.usage
             content = response.choices[0].message.content or "" if response.choices else ""
 
             # If the budget was exhausted and content is still empty the model spent
             # everything on internal reasoning.  Retry once with a higher cap.
             if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=[{"role": "user", "content": prompt_text}],
-                    max_completion_tokens=8192,
-                )
+                retry_kwargs = dict(call_kwargs, max_completion_tokens=8192)
+                response = client.chat.completions.create(**retry_kwargs)
                 usage = response.usage
                 content = response.choices[0].message.content or "" if response.choices else ""
 
@@ -261,7 +268,7 @@ class LLMService:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            effort = "high" if is_reasoning else "medium"
+            effort = "high" if is_reasoning else "low"
             response = client.responses.create(
                 model=model_name,
                 input=prompt_text,

@@ -406,11 +406,80 @@
   </div>
 </div>
 
-{% if run.notes %}
-<div class="ts-card" style="margin-bottom:1.25rem; padding:.875rem 1.25rem;">
-  <span style="color:var(--ts-text-muted); font-size:.8rem;">Notes:</span> {{ run.notes }}
+<div class="ts-card" id="run-notes-card" style="margin-bottom:1.25rem; padding:.875rem 1.25rem;">
+  <div style="display:flex; align-items:flex-start; gap:.75rem;">
+    <div style="flex:1;">
+      <span style="color:var(--ts-text-muted); font-size:.8rem; display:block; margin-bottom:.35rem;">Notes</span>
+      <div id="run-notes-display" style="{% if not run.notes %}color:var(--ts-text-muted); font-style:italic;{% endif %}">
+        {{ run.notes if run.notes else "No notes — click Edit to add." }}
+      </div>
+      <textarea id="run-notes-input" class="ts-input" rows="3"
+        style="display:none; width:100%; margin-top:.5rem; resize:vertical;"
+        placeholder="Add notes for this run…">{{ run.notes or "" }}</textarea>
+    </div>
+    <div style="display:flex; gap:.5rem; flex-shrink:0;">
+      <button id="run-notes-edit-btn" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="runNotesEdit()">Edit</button>
+      <button id="run-notes-save-btn" class="ts-btn ts-btn-primary ts-btn-sm" style="display:none;" onclick="runNotesSave()">Save</button>
+      <button id="run-notes-cancel-btn" class="ts-btn ts-btn-secondary ts-btn-sm" style="display:none;" onclick="runNotesCancel()">Cancel</button>
+    </div>
+  </div>
+  <div id="run-notes-feedback" style="font-size:.75rem; margin-top:.4rem; display:none;"></div>
 </div>
-{% endif %}
+<script>
+(function() {
+  var _orig = "";
+  window.runNotesEdit = function() {
+    _orig = document.getElementById("run-notes-input").value;
+    document.getElementById("run-notes-display").style.display = "none";
+    document.getElementById("run-notes-input").style.display = "block";
+    document.getElementById("run-notes-edit-btn").style.display = "none";
+    document.getElementById("run-notes-save-btn").style.display = "";
+    document.getElementById("run-notes-cancel-btn").style.display = "";
+    document.getElementById("run-notes-input").focus();
+  };
+  window.runNotesCancel = function() {
+    document.getElementById("run-notes-input").value = _orig;
+    document.getElementById("run-notes-input").style.display = "none";
+    document.getElementById("run-notes-display").style.display = "";
+    document.getElementById("run-notes-edit-btn").style.display = "";
+    document.getElementById("run-notes-save-btn").style.display = "none";
+    document.getElementById("run-notes-cancel-btn").style.display = "none";
+  };
+  window.runNotesSave = function() {
+    var notes = document.getElementById("run-notes-input").value.trim();
+    var fb = document.getElementById("run-notes-feedback");
+    fetch("/experiments/{{ run.id }}/update-notes", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({notes: notes})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        var disp = document.getElementById("run-notes-display");
+        disp.textContent = notes || "No notes — click Edit to add.";
+        disp.style.color = notes ? "" : "var(--ts-text-muted)";
+        disp.style.fontStyle = notes ? "" : "italic";
+        document.getElementById("run-notes-input").value = notes;
+        runNotesCancel();
+        fb.style.color = "var(--ts-success, #22c55e)";
+        fb.textContent = "Saved.";
+        fb.style.display = "";
+        setTimeout(function() { fb.style.display = "none"; }, 2000);
+      } else {
+        fb.style.color = "var(--ts-error, #ef4444)";
+        fb.textContent = data.error || "Error saving notes.";
+        fb.style.display = "";
+      }
+    })
+    .catch(function() {
+      fb.style.color = "var(--ts-error, #ef4444)";
+      fb.textContent = "Network error.";
+      fb.style.display = "";
+    });
+  };
+})();
+</script>
 
 <div class="ts-card">
   <div class="ts-card-header"><span class="ts-card-title">Token Results</span></div>

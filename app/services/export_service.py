@@ -125,6 +125,7 @@ class ExportService:
         pei_results: List[dict] = None,
         pei_group_results: List[dict] = None,
         translation_scores: List[dict] = None,
+        run_notes: str = None,
     ) -> str:
         """Convert results to a structured JSON dataset."""
         dataset = {
@@ -136,6 +137,7 @@ class ExportService:
                     "PEI changes only when the set of approved translations changes."
                 )
             },
+            "run_notes": run_notes or "",
             "token_results": results,
             "pei_results": pei_results or [],
             "pei_group_results": pei_group_results or [],

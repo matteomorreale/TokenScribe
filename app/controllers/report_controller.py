@@ -72,11 +72,14 @@ def export_json():
     if not run_id:
         flash("Specify a run_id to export.", "error")
         return redirect(url_for("report.reports_dashboard"))
-    results = _em().get_results_by_run(run_id)
-    pei = _em().get_pei_by_run(run_id)
-    pei_groups = _em().get_pei_groups_by_run(run_id)
-    translation_scores = _em().get_translation_scores_by_run(run_id)
-    json_data = ExportService.to_json(results, pei, pei_groups, translation_scores)
+    em = _em()
+    run = em.get_run_by_id(run_id)
+    results = em.get_results_by_run(run_id)
+    pei = em.get_pei_by_run(run_id)
+    pei_groups = em.get_pei_groups_by_run(run_id)
+    translation_scores = em.get_translation_scores_by_run(run_id)
+    run_notes = (run or {}).get("notes") or ""
+    json_data = ExportService.to_json(results, pei, pei_groups, translation_scores, run_notes=run_notes)
     return Response(
         json_data,
         mimetype="application/json",

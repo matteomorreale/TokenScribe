@@ -78,6 +78,17 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def update_run_notes(self, run_id: int, notes: str) -> None:
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE experiment_runs SET notes=? WHERE id=?",
+                (notes, run_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def snapshot_translations(self, run_id: int, study_id: int):
         """Freeze the currently approved translations for this run.
 

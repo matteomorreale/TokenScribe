@@ -73,6 +73,7 @@ def queue_status(run_id: int):
                 "completed_at":   it.get("completed_at"),
                 "model_id":       (it.get("payload") or {}).get("model_id"),
                 "model_name":     (it.get("payload") or {}).get("model_name"),
+                "language_id":    (it.get("payload") or {}).get("language_id"),
                 "language_name":  (it.get("payload") or {}).get("language_name"),
                 "prompt_id":      (it.get("payload") or {}).get("prompt_id"),
             }
@@ -399,6 +400,21 @@ def add_models(run_id: int):
         flash("Nessuna nuova chiamata accodata.", "info")
 
     return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+# ------------------------------------------------------------------
+# POST /experiments/<id>/update-notes  →  aggiorna le note della run
+# ------------------------------------------------------------------
+
+@run_bp.route("/experiments/<int:run_id>/update-notes", methods=["POST"])
+def update_notes(run_id: int):
+    run = _em().get_run_by_id(run_id)
+    if not run:
+        return jsonify({"error": "Run not found"}), 404
+    data = request.get_json(silent=True) or {}
+    notes = data.get("notes", "").strip()
+    _em().update_run_notes(run_id, notes)
+    return jsonify({"ok": True, "notes": notes})
 
 
 # ------------------------------------------------------------------
