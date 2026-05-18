@@ -305,6 +305,13 @@ class QueueService:
         finally:
             _conn.close()
 
+        # Apply per-run reasoning override if set ('on' or 'off').
+        _override = (payload.get("reasoning_override") or "").strip()
+        if _override == "on":
+            is_reasoning = True
+        elif _override == "off":
+            is_reasoning = False
+
         llm_ctx = {
             "operation_type": "experiment",
             "run_id": run_id,

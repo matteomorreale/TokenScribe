@@ -111,6 +111,12 @@ def new_experiment(study_id: int):
     notes = request.form.get("notes", "").strip()
     repetitions_per_cell = max(1, min(10, request.form.get("repetitions", type=int) or 3))
     force_magi = bool(request.form.get("force_magi"))
+    # reasoning_override per model: '' = use model config, 'on' = force ON, 'off' = force OFF
+    reasoning_overrides: dict[int, str] = {}
+    for mid in selected_model_ids:
+        val = request.form.get(f"reasoning_override_{mid}", "").strip()
+        if val in ("on", "off"):
+            reasoning_overrides[mid] = val
     if not selected_model_ids:
         flash("Select at least one model.", "error")
         prompt_ids = [p["id"] for p in prompts]
@@ -295,6 +301,7 @@ def new_experiment(study_id: int):
                             "cost_per_input":    model_info.get("cost_per_input_token", 0.0) or 0.0,
                             "cost_per_output":   model_info.get("cost_per_output_token", 0.0) or 0.0,
                             "is_reasoning":      bool(model_info.get("is_reasoning", 0)),
+                            "reasoning_override": reasoning_overrides.get(model_id, ""),
                             "text":              trans["text"],
                             "repetition_index":  rep,
                         },

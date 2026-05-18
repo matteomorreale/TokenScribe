@@ -51,9 +51,16 @@ TokenScribe measures **SFS**, **LER**, **PEI**, and **MAGI Selection Scores** to
 ```bash
 git clone https://github.com/matteomorreale/TokenScribe.git
 cd TokenScribe
-python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+
+python3 --version
+# se vedi 3.11.x OK, altrimenti installa Python 3.11 (vedi sotto)
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+
 python run.py
 ```
 

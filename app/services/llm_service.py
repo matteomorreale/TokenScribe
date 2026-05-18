@@ -27,6 +27,16 @@ def _openai_supports_reasoning_effort(model_name: str) -> bool:
     return mn.startswith(("o1", "o3", "o4")) or "gpt-5" in mn
 
 
+def _openai_low_effort(model_name: str) -> str:
+    """Return the lowest supported reasoning effort for the model.
+
+    gpt-5.5 models do not accept 'low'; their minimum is 'medium'.
+    """
+    if "gpt-5.5" in model_name.lower():
+        return "medium"
+    return "low"
+
+
 def _is_not_chat_model(error_str: str) -> bool:
     s = error_str.lower()
     return "not a chat model" in s or "v1/completions" in s
@@ -233,7 +243,7 @@ class LLMService:
                 max_completion_tokens=max_tok,
             )
             if _openai_supports_reasoning_effort(model_name):
-                call_kwargs["reasoning_effort"] = "high" if is_reasoning else "low"
+                call_kwargs["reasoning_effort"] = "high" if is_reasoning else _openai_low_effort(model_name)
 
             response = client.chat.completions.create(**call_kwargs)
             usage = response.usage
@@ -268,7 +278,7 @@ class LLMService:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            effort = "high" if is_reasoning else "low"
+            effort = "high" if is_reasoning else _openai_low_effort(model_name)
             response = client.responses.create(
                 model=model_name,
                 input=prompt_text,

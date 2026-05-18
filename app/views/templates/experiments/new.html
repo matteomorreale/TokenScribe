@@ -91,6 +91,16 @@
     <form method="post" action="{{ url_for('experiment.new_experiment', study_id=study.id) }}">
       <div class="ts-form-group">
         <label class="ts-label">Select Models *</label>
+        <div style="display:flex; align-items:center; gap:.6rem; margin-bottom:.55rem; flex-wrap:wrap;">
+          <span style="font-size:.76rem; color:var(--ts-text-muted);">Reasoning override:</span>
+          <select id="ts-reasoning-all" class="ts-input" style="width:auto; font-size:.75rem; padding:.18rem .45rem;"
+                  onchange="(function(v){document.querySelectorAll('select[name^=\'reasoning_override_\']').forEach(function(s){s.value=v;});})( this.value)">
+            <option value="" disabled selected>— applica a tutti —</option>
+            <option value="">Default (config modello)</option>
+            <option value="on">Force ON</option>
+            <option value="off">Force OFF</option>
+          </select>
+        </div>
         <div class="ts-checkbox-group">
           {% set current_provider = namespace(name='') %}
           {% for m in models %}
@@ -106,11 +116,22 @@
             {% set has_key = m.provider_name in configured_providers %}
             {% set is_judge = m.id in judge_model_ids %}
             {% set blocked = not has_key or is_judge %}
-            <label class="ts-checkbox-item" style="{{ 'opacity:.45; cursor:not-allowed;' if blocked else '' }}"
-                   title="{{ 'Riservato a MAGI Judge Panel' if is_judge else ('API key non configurata per ' + m.provider_name if not has_key else '') }}">
-              <input type="checkbox" name="model_ids" value="{{ m.id }}" {{ 'disabled' if blocked else '' }}>
-              {{ m.name }}{% if is_judge %} <span style="font-size:.7rem; color:var(--ts-text-muted);">[MAGI]</span>{% endif %}
-            </label>
+            <div style="display:flex; align-items:center; gap:.5rem; width:100%;">
+              <label class="ts-checkbox-item" style="flex:1; {{ 'opacity:.45; cursor:not-allowed;' if blocked else '' }}"
+                     title="{{ 'Riservato a MAGI Judge Panel' if is_judge else ('API key non configurata per ' + m.provider_name if not has_key else '') }}">
+                <input type="checkbox" name="model_ids" value="{{ m.id }}" {{ 'disabled' if blocked else '' }}>
+                {{ m.name }}
+                {% if is_judge %}<span style="font-size:.7rem; color:var(--ts-text-muted);">[MAGI]</span>{% endif %}
+                {% if m.is_reasoning %}<span style="font-size:.65rem; font-weight:700; color:var(--ts-accent); margin-left:.2rem;" title="Reasoning-capable">R</span>{% endif %}
+              </label>
+              {% if not blocked %}
+              <select name="reasoning_override_{{ m.id }}" class="ts-input" style="width:auto; font-size:.72rem; padding:.15rem .35rem; flex-shrink:0;">
+                <option value="">Default</option>
+                <option value="on">Force ON</option>
+                <option value="off">Force OFF</option>
+              </select>
+              {% endif %}
+            </div>
           {% endfor %}
         </div>
       </div>

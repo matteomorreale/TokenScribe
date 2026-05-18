@@ -204,13 +204,22 @@
       <div class="ts-table-wrap">
         <table class="ts-table">
           <thead>
-            <tr><th>Gruppo</th><th>PEI</th><th>Band</th></tr>
+            <tr>
+              <th>Gruppo</th>
+              <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviazione dal PEI globale del prompt">Δ vs globale ★</th>
+              <th>PEI</th><th>Band</th>
+            </tr>
           </thead>
           <tbody>
             {% for g, v in pei_script_groups.items() %}
+            {% set delta = v.pei - pei.pei %}
             <tr>
               <td><span class="ts-badge ts-badge-info">{{ g }}</span></td>
-              <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(v.pei) }}</td>
+              <td style="font-variant-numeric:tabular-nums; font-weight:600;
+                         color:{% if delta < -0.001 %}var(--ts-success,#22c55e){% elif delta > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %};">
+                {{ "%+.4f"|format(delta) }}
+              </td>
+              <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(v.pei) }}</td>
               <td><span class="ts-badge ts-badge-secondary">{{ v.pei_band }}</span></td>
             </tr>
             {% endfor %}
@@ -227,13 +236,22 @@
       <div class="ts-table-wrap">
         <table class="ts-table">
           <thead>
-            <tr><th>Gruppo</th><th>PEI</th><th>Band</th></tr>
+            <tr>
+              <th>Gruppo</th>
+              <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviazione dal PEI globale del prompt">Δ vs globale ★</th>
+              <th>PEI</th><th>Band</th>
+            </tr>
           </thead>
           <tbody>
             {% for g, v in pei_morph_groups.items() %}
+            {% set delta = v.pei - pei.pei %}
             <tr>
               <td><span class="ts-badge ts-badge-info">{{ g }}</span></td>
-              <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(v.pei) }}</td>
+              <td style="font-variant-numeric:tabular-nums; font-weight:600;
+                         color:{% if delta < -0.001 %}var(--ts-success,#22c55e){% elif delta > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %};">
+                {{ "%+.4f"|format(delta) }}
+              </td>
+              <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(v.pei) }}</td>
               <td><span class="ts-badge ts-badge-secondary">{{ v.pei_band }}</span></td>
             </tr>
             {% endfor %}

@@ -20,7 +20,12 @@
     <strong style="color:var(--ts-text);">PEI</strong> is the mean coefficient of variation (CV) across character length, word count, and neutral token count
     of the <em>approved translation candidate texts</em>. Lower PEI = more structurally equivalent translations. Goal: minimize PEI.
   </p>
-  <p style="font-size:.82rem; color:var(--ts-text-muted); margin-top:.5rem; border-top:1px solid rgba(108,99,255,.2); padding-top:.5rem;">
+  <p style="font-size:.84rem; color:var(--ts-text); margin-top:.5rem; border-top:1px solid rgba(108,99,255,.2); padding-top:.5rem;">
+    <strong>Primary KPI: <code>Δ vs baseline</code></strong> —
+    absolute PEI is high across all prompts and poorly discriminating.
+    The real signal is the per-group deviation from its own cross-run baseline: a negative Δ means the group is <em>better-aligned</em> than average; positive means <em>higher structural variance</em>.
+  </p>
+  <p style="font-size:.82rem; color:var(--ts-text-muted); margin-top:.4rem;">
     <strong style="color:var(--ts-warning, #e6a817);">Model-invariant metric.</strong>
     PEI depends only on the approved translation texts, not on the LLM used for the run.
     Identical PEI values across runs with different models is expected and mathematically correct — it means the same translation candidates were evaluated.
@@ -44,10 +49,28 @@
       </thead>
       <tbody>
         {% for p in pei_results %}
+        {% set groups = pgr_by_prompt.get(p.prompt_id) %}
+        {% set max_delta = namespace(val=none) %}
+        {% if groups %}
+          {% for g in groups %}
+            {% if g.pei_delta_vs_group is not none %}
+              {% if max_delta.val is none or g.pei_delta_vs_group|abs > max_delta.val|abs %}
+                {% set max_delta.val = g.pei_delta_vs_group %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
         <tr>
           <td style="font-family:var(--ts-mono); font-size:.78rem; max-width:200px;">
             {{ p.base_text[:60] ~ '…' if p.base_text|length > 60 else p.base_text }}
-            {% set groups = pgr_by_prompt.get(p.prompt_id) %}
+            {% if max_delta.val is not none %}
+            <div style="margin-top:.25rem;">
+              <span style="font-size:.72rem; font-family:var(--ts-sans); font-variant-numeric:tabular-nums;
+                           color:{% if max_delta.val < -0.001 %}var(--ts-success,#22c55e){% elif max_delta.val > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %};">
+                max&nbsp;|Δ|&nbsp;{{ "%+.4f"|format(max_delta.val) }}
+              </span>
+            </div>
+            {% endif %}
             {% if groups %}
             <details class="ts-details" style="margin-top:.35rem;">
               <summary class="ts-btn ts-btn-secondary ts-btn-sm">Sottogruppi</summary>
@@ -55,7 +78,11 @@
                 <div class="ts-table-wrap">
                   <table class="ts-table">
                     <thead>
-                      <tr><th>Tipo</th><th>Gruppo</th><th>N</th><th>PEI</th><th>Baseline</th><th>Δ vs baseline</th><th>Δ vs globale</th><th>Band</th></tr>
+                      <tr>
+                        <th>Tipo</th><th>Gruppo</th><th>N</th>
+                        <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviation from group cross-run baseline">Δ vs baseline ★</th>
+                        <th>PEI</th><th>Baseline</th><th>Δ vs globale</th><th>Band</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {% for g in groups %}
@@ -63,10 +90,13 @@
                         <td><span class="ts-badge ts-badge-info">{{ g.group_type }}</span></td>
                         <td>{{ g.group_value }}</td>
                         <td style="font-variant-numeric:tabular-nums;">{{ g.language_count }}</td>
-                        <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei) }}</td>
-                        <td style="font-variant-numeric:tabular-nums;">{% if g.baseline_pei is not none %}{{ "%.4f"|format(g.baseline_pei) }}{% else %}—{% endif %}</td>
-                        <td style="font-variant-numeric:tabular-nums;">{% if g.pei_delta_vs_group is not none %}{{ "%.4f"|format(g.pei_delta_vs_group) }}{% else %}—{% endif %}</td>
-                        <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei_delta_vs_global) }}</td>
+                        <td style="font-variant-numeric:tabular-nums; font-weight:600;
+                                   color:{% if g.pei_delta_vs_group is not none %}{% if g.pei_delta_vs_group < -0.001 %}var(--ts-success,#22c55e){% elif g.pei_delta_vs_group > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %}{% else %}inherit{% endif %};">
+                          {% if g.pei_delta_vs_group is not none %}{{ "%+.4f"|format(g.pei_delta_vs_group) }}{% else %}—{% endif %}
+                        </td>
+                        <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(g.pei) }}</td>
+                        <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{% if g.baseline_pei is not none %}{{ "%.4f"|format(g.baseline_pei) }}{% else %}—{% endif %}</td>
+                        <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(g.pei_delta_vs_global) }}</td>
                         <td><span class="ts-badge ts-badge-secondary">{{ g.pei_band }}</span></td>
                       </tr>
                       {% endfor %}
@@ -78,16 +108,16 @@
             {% endif %}
           </td>
           <td>{% if p.category %}<span class="ts-badge ts-badge-accent">{{ p.category }}</span>{% else %}—{% endif %}</td>
-          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_char_length) }}</td>
-          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_word_count) }}</td>
-          <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(p.cv_token_count) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(p.cv_char_length) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(p.cv_word_count) }}</td>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(p.cv_token_count) }}</td>
           <td>
             <div class="ts-score-bar-wrap" style="min-width:160px;">
               <div class="ts-score-bar">
                 <div class="ts-score-bar-fill" data-value="{{ [1 - p.pei, 0]|max }}"
-                     style="background: linear-gradient(90deg, var(--ts-accent-2), var(--ts-accent));"></div>
+                     style="background: linear-gradient(90deg, var(--ts-accent-2), var(--ts-accent)); opacity:.6;"></div>
               </div>
-              <span class="ts-score-value">{{ "%.4f"|format(p.pei) }}</span>
+              <span class="ts-score-value" style="color:var(--ts-text-muted);">{{ "%.4f"|format(p.pei) }}</span>
             </div>
           </td>
           <td>{% if p.pei_band %}<span class="ts-badge ts-badge-secondary">{{ p.pei_band }}</span>{% else %}—{% endif %}</td>

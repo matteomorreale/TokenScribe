@@ -85,20 +85,42 @@
   {% set _ = pgr_by_prompt[g.prompt_id].append(g) %}
 {% endfor %}
 <div class="ts-card">
-  <div class="ts-card-header"><span class="ts-card-title">PEI per Prompt</span></div>
+  <div class="ts-card-header">
+    <span class="ts-card-title">PEI per Prompt</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:.75rem;">
+      KPI primario: <strong style="color:var(--ts-accent);">Δ vs baseline</strong> nei sottogruppi — il valore assoluto PEI è poco discriminante
+    </span>
+  </div>
   <div style="display:flex; flex-direction:column; gap:.6rem;">
     {% for p in pei_results %}
-    <div style="display:flex; align-items:center; gap:.75rem;">
+    {% set groups = pgr_by_prompt.get(p.prompt_id) %}
+    {% set max_delta = namespace(val=none) %}
+    {% if groups %}
+      {% for g in groups %}
+        {% if g.pei_delta_vs_group is not none %}
+          {% if max_delta.val is none or g.pei_delta_vs_group|abs > max_delta.val|abs %}
+            {% set max_delta.val = g.pei_delta_vs_group %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
       <span style="min-width:200px; font-size:.8rem; font-family:var(--ts-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
         {{ p.base_text[:40] ~ '…' if p.base_text|length > 40 else p.base_text }}
       </span>
-      <div class="ts-score-bar" style="flex:1;">
+      <div class="ts-score-bar" style="flex:1; opacity:.55;">
         <div class="ts-score-bar-fill" data-value="{{ [1 - p.pei, 0]|max }}"
              style="background:linear-gradient(90deg,var(--ts-accent-2),var(--ts-accent));"></div>
       </div>
-      <span class="ts-score-value">{{ "%.4f"|format(p.pei) }}</span>
+      <span class="ts-score-value" style="color:var(--ts-text-muted);">{{ "%.4f"|format(p.pei) }}</span>
       {% if p.pei_band %}<span class="ts-badge ts-badge-secondary">{{ p.pei_band }}</span>{% endif %}
-      {% set groups = pgr_by_prompt.get(p.prompt_id) %}
+      {% if max_delta.val is not none %}
+      <span style="font-size:.78rem; font-variant-numeric:tabular-nums; font-weight:600;
+                   color:{% if max_delta.val < -0.001 %}var(--ts-success,#22c55e){% elif max_delta.val > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %};"
+            title="Massimo |Δ vs baseline| tra i sottogruppi">
+        max&nbsp;|Δ|&nbsp;{{ "%+.4f"|format(max_delta.val) }}
+      </span>
+      {% endif %}
       {% if groups %}
       <details class="ts-details">
         <summary class="ts-btn ts-btn-secondary ts-btn-sm">Gruppi</summary>
@@ -106,7 +128,11 @@
           <div class="ts-table-wrap">
             <table class="ts-table">
               <thead>
-                <tr><th>Tipo</th><th>Gruppo</th><th>N</th><th>PEI</th><th>Baseline</th><th>Δ vs baseline</th><th>Δ vs globale</th></tr>
+                <tr>
+                  <th>Tipo</th><th>Gruppo</th><th>N</th>
+                  <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviation from group cross-run baseline">Δ vs baseline ★</th>
+                  <th>PEI</th><th>Baseline</th><th>Δ vs globale</th>
+                </tr>
               </thead>
               <tbody>
                 {% for g in groups %}
@@ -114,10 +140,13 @@
                   <td><span class="ts-badge ts-badge-info">{{ g.group_type }}</span></td>
                   <td>{{ g.group_value }}</td>
                   <td style="font-variant-numeric:tabular-nums;">{{ g.language_count }}</td>
-                  <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei) }}</td>
-                  <td style="font-variant-numeric:tabular-nums;">{% if g.baseline_pei is not none %}{{ "%.4f"|format(g.baseline_pei) }}{% else %}—{% endif %}</td>
-                  <td style="font-variant-numeric:tabular-nums;">{% if g.pei_delta_vs_group is not none %}{{ "%.4f"|format(g.pei_delta_vs_group) }}{% else %}—{% endif %}</td>
-                  <td style="font-variant-numeric:tabular-nums;">{{ "%.4f"|format(g.pei_delta_vs_global) }}</td>
+                  <td style="font-variant-numeric:tabular-nums; font-weight:600;
+                             color:{% if g.pei_delta_vs_group is not none %}{% if g.pei_delta_vs_group < -0.001 %}var(--ts-success,#22c55e){% elif g.pei_delta_vs_group > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %}{% else %}inherit{% endif %};">
+                    {% if g.pei_delta_vs_group is not none %}{{ "%+.4f"|format(g.pei_delta_vs_group) }}{% else %}—{% endif %}
+                  </td>
+                  <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(g.pei) }}</td>
+                  <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{% if g.baseline_pei is not none %}{{ "%.4f"|format(g.baseline_pei) }}{% else %}—{% endif %}</td>
+                  <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">{{ "%.4f"|format(g.pei_delta_vs_global) }}</td>
                 </tr>
                 {% endfor %}
               </tbody>
