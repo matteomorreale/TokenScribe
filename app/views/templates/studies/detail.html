@@ -137,6 +137,132 @@
   {% endif %}
 </div>
 
+<!-- Bulk Translate Progress (shown while job is running) -->
+<div id="bulk-translate-card" class="ts-card" style="display:none; margin-bottom:1.25rem;">
+  <div class="ts-card-header" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <span class="ts-card-title">Bulk Translate in corso</span>
+    <span id="bt-badge"><span class="ts-badge ts-badge-info">running</span></span>
+    <span id="bt-progress-text" style="font-size:.82rem; color:var(--ts-text-muted);"></span>
+    <span id="bt-step-text" style="font-size:.78rem; color:var(--ts-text-muted);"></span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">aggiornamento ogni 3s</span>
+  </div>
+  <div style="padding:.25rem 1.25rem .75rem;">
+    <div style="background:var(--ts-border); border-radius:4px; height:8px; overflow:hidden;">
+      <div id="bt-bar" style="height:100%; border-radius:4px; width:0%; transition:width .4s; background:var(--ts-accent,#6366f1);"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Translate Panel -->
+{% if prompts %}
+<div class="ts-card" style="margin-bottom:1.25rem;">
+  <div class="ts-card-header">
+    <span class="ts-card-title">Bulk Translate</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">Genera traduzioni AI per più prompt in una sola operazione</span>
+  </div>
+  <form method="post" action="{{ url_for('study.bulk_translate', study_id=study.id) }}" id="bulk-translate-form">
+
+    <!-- Prompt selection -->
+    <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.6rem;">
+      Seleziona i prompt da tradurre (lascia tutto deselezionato per tradurre tutti).
+    </p>
+    <div class="ts-table-wrap" style="margin-bottom:1rem;">
+      <table class="ts-table" style="font-size:.78rem;">
+        <thead>
+          <tr>
+            <th style="width:2rem;"><input type="checkbox" id="bt-select-all" title="Seleziona tutti"></th>
+            <th>#</th>
+            <th>Base Text</th>
+            <th style="text-align:center;">Traduzioni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in prompts %}
+          <tr>
+            <td><input type="checkbox" name="bulk_prompt_ids" value="{{ p.id }}" class="bt-prompt-cb"></td>
+            <td style="color:var(--ts-text-muted);">{{ p.id }}</td>
+            <td style="font-family:var(--ts-mono); max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              {{ p.base_text[:80] ~ '…' if p.base_text|length > 80 else p.base_text }}
+            </td>
+            <td style="text-align:center;"><span class="ts-badge ts-badge-info">{{ p.translation_count if p.translation_count is defined else '—' }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Language + config grid -->
+    <div class="ts-grid ts-grid-2" style="align-items:start; margin-bottom:1rem;">
+      <div>
+        <label class="ts-label">Lingue target</label>
+        <div style="display:flex; flex-wrap:wrap; gap:.4rem; margin:.3rem 0 .6rem;">
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Alphabetic">Alphabetic</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Abjad">Abjad</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Abugida">Abugida</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Logographic">Logographic</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Syllabic">Syllabic</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Featural">Featural</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Mixed">Mixed</button>
+          <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="langCodes" data-bt-preset-value="it,de,ru,pl,ar,hi,zh-Hans,ja,ko">Mixed 10</button>
+        </div>
+        <select id="bulk-language-ids" name="bulk_language_ids" class="ts-select" multiple size="10" required>
+          {% for l in languages %}
+            {% if l.code != 'en' %}
+              <option value="{{ l.id }}"
+                      data-writing-system="{{ l.writing_system }}"
+                      data-script-group="{{ l.script_group or '' }}"
+                      data-morphology-group="{{ l.morphology_group or '' }}"
+                      data-lang-code="{{ l.code }}">{{ l.name }} ({{ l.code }}) — {{ l.writing_system }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <div class="ts-input-hint">Selezione multipla: ⌘/Ctrl + click</div>
+      </div>
+      <div>
+        <div class="ts-form-group" style="margin-bottom:.65rem;">
+          <label class="ts-label" for="bulk_sfs_min">SFS minimo</label>
+          <input id="bulk_sfs_min" name="bulk_sfs_min" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.92" required>
+        </div>
+        <div class="ts-form-group" style="margin-bottom:.65rem;">
+          <label class="ts-label" for="bulk_candidates_per_lang">Candidati per lingua</label>
+          <input id="bulk_candidates_per_lang" name="bulk_candidates_per_lang" type="number" class="ts-input" min="1" max="5" value="2" required>
+        </div>
+        <div class="ts-form-group" style="margin-bottom:.85rem;">
+          <label class="ts-label" for="bulk_pei_profile">Profilo PEI</label>
+          <select id="bulk_pei_profile" name="bulk_pei_profile" class="ts-select" required>
+            <option value="homogeneous" selected>Omogeneo — PEI &lt; 0.20</option>
+            <option value="moderate">Moderato — PEI 0.20–0.35</option>
+            <option value="cross_script">Cross-script — PEI &gt; 0.35 accettabile</option>
+          </select>
+        </div>
+        <div style="border-top:1px solid var(--ts-border); padding-top:.75rem; display:flex; flex-direction:column; gap:.5rem;">
+          <label style="display:flex; align-items:center; gap:.5rem; font-size:.82rem; cursor:pointer;">
+            <input type="checkbox" name="bulk_run_magi" value="1" id="bulk_run_magi"{% if not judges_ok %} title="Configura i 3 judge MAGI in Settings per abilitare Phase 2"{% endif %}>
+            <span>Run MAGI Phase 1</span>
+            <span style="color:var(--ts-text-muted); font-size:.75rem;">+ Phase 2 se judges configurati</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:.5rem; font-size:.82rem; cursor:pointer;" id="bt-phase2-label" style="display:none;">
+            <input type="checkbox" name="bulk_run_phase2" value="1" id="bulk_run_phase2"{% if not judges_ok %} disabled{% endif %}>
+            <span>Run MAGI Phase 2 (judge panel)</span>
+            {% if not judges_ok %}<span class="ts-badge ts-badge-warning" style="font-size:.7rem;">judges non configurati</span>{% endif %}
+          </label>
+          <label style="display:flex; align-items:center; gap:.5rem; font-size:.82rem; cursor:pointer;">
+            <input type="checkbox" name="bulk_auto_approve" value="1">
+            <span>Auto-approva il miglior candidato per lingua</span>
+            <span style="color:var(--ts-text-muted); font-size:.75rem;">(score MAGI se attivo, altrimenti SFS)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:.75rem; align-items:center;">
+      <button type="submit" class="ts-btn ts-btn-primary" data-loading="Avvio in corso…">Avvia Bulk Translate</button>
+      <span style="font-size:.78rem; color:var(--ts-text-muted);">Il processo gira in background — la pagina si aggiornerà al termine.</span>
+    </div>
+  </form>
+</div>
+{% endif %}
+
 <!-- MAGI Repair Progress (shown when a repair run is active) -->
 <div id="magi-repair-card" class="ts-card" style="display:none; margin-bottom:1.25rem;">
   <div class="ts-card-header" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
@@ -238,8 +364,100 @@
 document.getElementById('magi-select-all')?.addEventListener('change', function() {
   document.querySelectorAll('.magi-prompt-cb').forEach(cb => cb.checked = this.checked);
 });
+
+document.getElementById('bt-select-all')?.addEventListener('change', function() {
+  document.querySelectorAll('.bt-prompt-cb').forEach(cb => cb.checked = this.checked);
+});
+
+// Bulk translate language preset buttons
+(function () {
+  const langSelect = document.getElementById('bulk-language-ids');
+  if (!langSelect) return;
+  const presetBtns = Array.from(document.querySelectorAll('[data-bt-preset-key][data-bt-preset-value]'));
+
+  function setActive(btn) {
+    const key = btn.dataset.btPresetKey;
+    presetBtns.filter(b => b.dataset.btPresetKey === key).forEach(b => {
+      b.classList.remove('ts-btn-primary');
+      b.classList.add('ts-btn-secondary');
+    });
+    btn.classList.remove('ts-btn-secondary');
+    btn.classList.add('ts-btn-primary');
+  }
+
+  presetBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.btPresetKey;
+      const value = btn.dataset.btPresetValue;
+      const options = Array.from(langSelect.options);
+      if (key === 'langCodes') {
+        const codes = new Set(value.split(',').map(c => c.trim()));
+        const matched = options.filter(o => codes.has(o.dataset.langCode || ''));
+        if (!matched.length) return;
+        options.forEach(o => { o.selected = false; });
+        matched.forEach(o => { o.selected = true; });
+      } else {
+        const attrMap = { writingSystem: 'writingSystem', scriptGroup: 'scriptGroup', morphologyGroup: 'morphologyGroup' };
+        const dataKey = attrMap[key] || key;
+        const matchCount = options.filter(o => (o.dataset[dataKey] || '') === value).length;
+        if (!matchCount) return;
+        options.forEach(o => { o.selected = (o.dataset[dataKey] || '') === value; });
+      }
+      setActive(btn);
+      langSelect.focus();
+    });
+  });
+
+  // Show/hide Phase 2 checkbox based on MAGI checkbox
+  const runMagiCb = document.getElementById('bulk_run_magi');
+  const phase2Label = document.getElementById('bt-phase2-label');
+  if (runMagiCb && phase2Label) {
+    function togglePhase2() {
+      phase2Label.style.display = runMagiCb.checked ? '' : 'none';
+    }
+    runMagiCb.addEventListener('change', togglePhase2);
+    togglePhase2();
+  }
+})();
 </script>
 <script>
+(function () {
+  const BT_STATUS_URL = '{{ url_for("study.bulk_translate_status", study_id=study.id) }}';
+  const btCard = document.getElementById('bulk-translate-card');
+  const btBar  = document.getElementById('bt-bar');
+  const btProg = document.getElementById('bt-progress-text');
+  const btStep = document.getElementById('bt-step-text');
+  const STEP_LABELS = { translating: 'traducendo…', magi_phase1: 'MAGI Phase 1…', magi_phase2: 'MAGI Phase 2…', approving: 'approvando…' };
+
+  let btTimer = null;
+  let btWasActive = false;
+
+  async function pollBt() {
+    try {
+      const res = await fetch(BT_STATUS_URL);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.active) {
+        if (data.just_completed || btWasActive) {
+          clearInterval(btTimer);
+          window.location.reload();
+        }
+        return;
+      }
+      btWasActive = true;
+      if (btCard) btCard.style.display = '';
+      btProg.textContent = `${data.done}/${data.total} prompt completati`;
+      btStep.textContent = data.current_prompt_text
+        ? `${STEP_LABELS[data.current_step] || data.current_step} — "${data.current_prompt_text}…"`
+        : '';
+      if (btBar) btBar.style.width = (data.pct || 0) + '%';
+    } catch (_) {}
+  }
+
+  pollBt();
+  btTimer = setInterval(pollBt, 3000);
+})();
+
 (function () {
   const STATUS_URL = '{{ url_for("study.magi_repair_status", study_id=study.id) }}';
   const card      = document.getElementById('magi-repair-card');

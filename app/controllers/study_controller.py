@@ -4,14 +4,18 @@ Author: Matteo Morreale
 """
 
 import json
+import threading
 from datetime import datetime, timezone
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, jsonify
 from app.models import StudyModel, ExperimentModel, PromptModel, TranslationModel, SettingsModel, SelectionScoreModel
 from app.models.queue_model import QueueModel, RUN_QUEUED
 from app.services import get_magi_status
 from app.services.scoring_service import ScoringService
 
 _scorer = ScoringService()
+
+# In-memory bulk translate job tracker: study_id -> job_info dict
+_BULK_JOBS: dict = {}
 
 study_bp = Blueprint("study", __name__, url_prefix="/studies")
 
@@ -65,9 +69,11 @@ def detail_study(study_id: int):
     readiness = SelectionScoreModel(current_app.config["DB"]).get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
     judge_ids = SettingsModel(current_app.config["DB"], crypto=current_app.config.get("CRYPTO")).get_magi_judge_ids()
     judges_ok = all(judge_ids) and len(judge_ids) == 3
+    languages = TranslationModel(current_app.config["DB"]).get_all_languages()
     return render_template(
         "studies/detail.html", study=study, prompts=prompts, runs=runs,
         magi_status=magi_status, readiness=readiness, judges_ok=judges_ok,
+        languages=languages,
     )
 
 
@@ -202,6 +208,267 @@ def magi_repair_status(study_id: int):
     run_status = row["status"]
     progress = QueueModel(db).get_run_progress(run_id)
     return jsonify({"active": True, "run_id": run_id, "run_status": run_status, "progress": progress})
+
+
+def _bulk_translate_worker(app, study_id, prompt_list, language_ids, sfs_min, pei_profile, pei_max, candidates_per_lang, run_magi, run_phase2, auto_approve):
+    """Background thread: translates each prompt and optionally runs MAGI + auto-approves."""
+    from app.services.translation_ai_service import run_ai_translate
+    from app.services import LLMService, MAGIService
+
+    job = _BULK_JOBS[study_id]
+
+    with app.app_context():
+        db = app.config["DB"]
+        log_svc = app.config.get("LOG_SERVICE")
+        settings = SettingsModel(db, crypto=app.config.get("CRYPTO")).get_all()
+        tm = TranslationModel(db)
+        pm = PromptModel(db)
+        ssm = SelectionScoreModel(db)
+
+        judge_models = []
+        if run_magi and run_phase2:
+            em = ExperimentModel(db)
+            judge_id_vals = [
+                settings.get("magi_judge_balthasar_id"),
+                settings.get("magi_judge_caspar_id"),
+                settings.get("magi_judge_melchior_id"),
+            ]
+            if all(judge_id_vals):
+                judge_models = [em.get_model_by_id(int(jid)) for jid in judge_id_vals]
+                judge_models = [m for m in judge_models if m]
+
+        for prompt in prompt_list:
+            prompt_id = prompt["id"]
+            job["current_prompt_id"] = prompt_id
+            job["current_prompt_text"] = (prompt.get("base_text") or "")[:60]
+            job["status"] = "running"
+
+            try:
+                job["current_step"] = "translating"
+                result = run_ai_translate(
+                    prompt=prompt,
+                    language_ids=language_ids,
+                    sfs_min=sfs_min,
+                    pei_profile=pei_profile,
+                    pei_max=pei_max,
+                    candidates_per_lang=candidates_per_lang,
+                    db=db,
+                    settings=settings,
+                    log_service=log_svc,
+                )
+
+                if result["created"] == 0:
+                    job["errors"].append(f"Prompt #{prompt_id}: nessun candidato generato")
+                    job["done"] += 1
+                    continue
+
+                job["results"].append({
+                    "prompt_id": prompt_id,
+                    "created": result["created"],
+                    "pei": float((result["accepted_pei"] or {}).get("pei") or 0.0),
+                })
+
+                all_new_cids = {cid for cids in result["candidates_by_lang"].values() for cid in cids}
+
+                if run_magi:
+                    job["current_step"] = "magi_phase1"
+                    all_candidates = tm.get_candidates_by_prompt(prompt_id)
+                    scored = [c for c in all_candidates if c["id"] in all_new_cids and c.get("sfs") is not None]
+
+                    if scored:
+                        approved = tm.get_approved_by_prompt(prompt_id)
+                        approved_texts = [c["text"] for c in approved if c.get("text")]
+                        if approved_texts:
+                            pei_result = _scorer.compute_pei(approved_texts)
+                        else:
+                            new_texts = [c["text"] for c in all_candidates if c["id"] in all_new_cids and c.get("text")]
+                            pei_result = _scorer.compute_pei(new_texts) if new_texts else {
+                                "pei": 0.0, "cv_char_length": 0.0, "cv_word_count": 0.0, "cv_token_count": 0.0,
+                            }
+                        pei = float(pei_result.get("pei") or 0.0)
+
+                        pm.save_pei_snapshot(
+                            prompt_id,
+                            pei=pei,
+                            cv_char=float(pei_result.get("cv_char_length") or 0.0),
+                            cv_word=float(pei_result.get("cv_word_count") or 0.0),
+                            cv_token=float(pei_result.get("cv_token_count") or 0.0),
+                        )
+                        for c in scored:
+                            c["prompt_id"] = prompt_id
+                            c["pei"] = pei
+
+                        magi_result = _scorer.compute_selection_scores(scored)
+                        ssm.upsert_scores(magi_result)
+
+                        if run_phase2 and len(judge_models) == 3:
+                            job["current_step"] = "magi_phase2"
+                            llm = LLMService(settings, log_service=log_svc)
+                            magi_svc = MAGIService()
+                            flagged = [c for c in magi_result if c.get("magi_required")]
+                            offline = False
+                            for fc in flagged:
+                                panel = magi_svc.run_panel(
+                                    original=prompt["base_text"],
+                                    translation=fc.get("text", ""),
+                                    language=fc.get("language_name", ""),
+                                    sfs=fc.get("sfs") or 0.0,
+                                    ler_char=fc.get("ler_char") or 1.0,
+                                    llm_service=llm,
+                                    judge_models=judge_models,
+                                    log_service=log_svc,
+                                    context_ref={"operation_type": "magi", "prompt_id": prompt_id},
+                                )
+                                if panel.get("magi_offline"):
+                                    job["errors"].append(f"Prompt #{prompt_id}: MAGI offline — {panel.get('magi_offline_reason', '')}")
+                                    offline = True
+                                    break
+                                ssm.update_magi_result(
+                                    candidate_id=fc["id"],
+                                    magi_score=panel["magi_score"],
+                                    magi_disagreement=panel["magi_disagreement"],
+                                    magi_judges=panel["judges"],
+                                )
+                            if offline:
+                                job["done"] += 1
+                                continue
+
+                        if auto_approve:
+                            job["current_step"] = "approving"
+                            magi_scores = ssm.get_by_prompt(prompt_id)
+                            magi_scores = [s for s in magi_scores if s["candidate_id"] in all_new_cids]
+                            by_lang = {}
+                            for s in magi_scores:
+                                lid = s.get("language_id")
+                                if lid is None:
+                                    continue
+                                existing = by_lang.get(lid)
+                                if not existing or (s.get("score_absolute") or -999.0) > (existing.get("score_absolute") or -999.0):
+                                    by_lang[lid] = s
+                            for lid, s in by_lang.items():
+                                tm.approve(prompt_id, lid, s["candidate_id"])
+
+                elif auto_approve:
+                    job["current_step"] = "approving"
+                    all_candidates = tm.get_candidates_by_prompt(prompt_id)
+                    by_lang = {}
+                    for c in all_candidates:
+                        if c["id"] not in all_new_cids:
+                            continue
+                        lid = c.get("language_id")
+                        if lid is None:
+                            continue
+                        existing = by_lang.get(lid)
+                        if not existing or (c.get("sfs") or 0.0) > (existing.get("sfs") or 0.0):
+                            by_lang[lid] = c
+                    for lid, c in by_lang.items():
+                        tm.approve(prompt_id, lid, c["id"])
+
+            except Exception as e:
+                job["errors"].append(f"Prompt #{prompt_id}: {str(e)}")
+
+            job["done"] += 1
+
+        job["status"] = "done"
+        job["current_step"] = ""
+        job["current_prompt_id"] = None
+
+
+@study_bp.route("/<int:study_id>/bulk-translate", methods=["POST"])
+def bulk_translate(study_id: int):
+    model = _get_model()
+    study = model.get_by_id(study_id)
+    if not study:
+        flash("Study not found.", "error")
+        return redirect(url_for("study.list_studies"))
+
+    # Block if a job is already running for this study
+    existing = _BULK_JOBS.get(study_id)
+    if existing and existing.get("status") == "running":
+        flash("Bulk translate già in corso per questo studio.", "warning")
+        return redirect(url_for("study.detail_study", study_id=study_id))
+
+    prompt_ids = request.form.getlist("bulk_prompt_ids", type=int)
+    language_ids_raw = request.form.getlist("bulk_language_ids")
+    try:
+        language_ids = sorted({int(x) for x in language_ids_raw if str(x).strip()})
+    except Exception:
+        flash("Selezione lingue non valida.", "error")
+        return redirect(url_for("study.detail_study", study_id=study_id))
+
+    if not language_ids:
+        flash("Seleziona almeno una lingua target.", "error")
+        return redirect(url_for("study.detail_study", study_id=study_id))
+
+    sfs_min = max(0.0, min(1.0, float(request.form.get("bulk_sfs_min") or 0.92)))
+    pei_profile = (request.form.get("bulk_pei_profile") or "homogeneous").strip()
+    if pei_profile not in {"homogeneous", "moderate", "cross_script"}:
+        pei_profile = "homogeneous"
+    pei_max = 0.35 if pei_profile in {"moderate", "cross_script"} else 0.20
+    candidates_per_lang = max(1, min(5, int(request.form.get("bulk_candidates_per_lang") or 2)))
+    run_magi = request.form.get("bulk_run_magi") == "1"
+    run_phase2 = request.form.get("bulk_run_phase2") == "1"
+    auto_approve = request.form.get("bulk_auto_approve") == "1"
+
+    all_prompts = PromptModel(current_app.config["DB"]).get_by_study(study_id)
+    if prompt_ids:
+        prompt_list = [p for p in all_prompts if p["id"] in set(prompt_ids)]
+    else:
+        prompt_list = all_prompts
+
+    if not prompt_list:
+        flash("Nessun prompt selezionato.", "warning")
+        return redirect(url_for("study.detail_study", study_id=study_id))
+
+    _BULK_JOBS[study_id] = {
+        "status": "starting",
+        "total": len(prompt_list),
+        "done": 0,
+        "current_prompt_id": None,
+        "current_prompt_text": "",
+        "current_step": "",
+        "errors": [],
+        "results": [],
+        "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    app = current_app._get_current_object()
+    t = threading.Thread(
+        target=_bulk_translate_worker,
+        args=(app, study_id, prompt_list, language_ids, sfs_min, pei_profile, pei_max,
+              candidates_per_lang, run_magi, run_phase2, auto_approve),
+        daemon=True,
+    )
+    t.start()
+
+    flash(f"Bulk translate avviato per {len(prompt_list)} prompt.", "info")
+    return redirect(url_for("study.detail_study", study_id=study_id))
+
+
+@study_bp.route("/<int:study_id>/bulk-translate-status")
+def bulk_translate_status(study_id: int):
+    job = _BULK_JOBS.get(study_id)
+    if not job or job.get("status") == "done":
+        if job and job.get("status") == "done":
+            results = job.get("results", [])
+            errors = job.get("errors", [])
+            _BULK_JOBS.pop(study_id, None)
+            return jsonify({"active": False, "just_completed": True, "results": results, "errors": errors})
+        return jsonify({"active": False})
+    total = job.get("total") or 1
+    done = job.get("done") or 0
+    pct = round(done / total * 100, 1)
+    return jsonify({
+        "active": True,
+        "status": job.get("status"),
+        "total": total,
+        "done": done,
+        "pct": pct,
+        "current_prompt_id": job.get("current_prompt_id"),
+        "current_prompt_text": job.get("current_prompt_text", ""),
+        "current_step": job.get("current_step", ""),
+        "errors": job.get("errors", []),
+    })
 
 
 @study_bp.route("/<int:study_id>/regen-magi", methods=["POST"])

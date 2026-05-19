@@ -32,10 +32,10 @@
       </label>
       <textarea class="ts-textarea" id="base_text" name="base_text"
                 style="min-height:180px;"
-                placeholder="[Instruction]&#10;&lt;&lt;&lt;&#10;[Input]&#10;&gt;&gt;&gt;&#10;[Expected Output]"
+                placeholder="[Instruction]&#10;&lt;input&gt;&#10;[Input]&#10;&lt;/input&gt;&#10;[Expected Output]"
                 required>{{ prompt.base_text if prompt else '' }}</textarea>
       <div class="ts-input-hint">
-        Required structure: <code>[Instruction] &lt;&lt;&lt; [Input] &gt;&gt;&gt; [Expected Output]</code>.
+        Required structure: <code>[Instruction] &lt;input&gt; [Input] &lt;/input&gt; [Expected Output]</code>.
         Delimiters must remain unchanged across all languages.
       </div>
     </div>
