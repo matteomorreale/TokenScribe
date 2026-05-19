@@ -445,5 +445,66 @@
     "requires_db_changes": false,
     "notes_for_agent": "1) xAI/Grok: 8th provider (PROVIDER_XAI='xai'); _call_xai() uses openai SDK at https://api.x.ai/v1; reasoning support (grok-3-mini); xai_api_key settings key. 2) Responses API fallback: _call_openai() catches 'not a chat model'/'v1/completions' error and retries via _call_openai_responses() (client.responses.create with reasoning.effort='high'/'medium'); handles gpt-5.4-pro. 3) Rate-limit handling: _is_rate_limited() added; TokenScribeCallResult.rate_limited field; QueueService raises RateLimitError on rate-limited results; worker catches it and calls QueueModel.requeue_at_end() (delete+reinsert with new auto-increment id so item goes to queue tail; max_retries=10). 4) add-models endpoint: POST /experiments/<id>/add-models on completed/partial/stopped runs; ExperimentModel.get_run_model_ids() and build_llm_payloads_from_snapshot(run_id, model_id, repetitions) build payloads from frozen run_translation_snapshot; QueueModel.get_run_repetitions() reads repetition count. 5) Model catalog update: OpenAI gpt-5.5, gpt-5.5-pro, gpt-5.4-pro, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano; Anthropic claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5; Google gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite; DeepSeek deepseek-v4-pro/flash; Meta Llama-4 Scout/Maverick; Qwen qwen3 family; Mistral magistral-medium/small; xAI grok-3 family. force_magi param added to new experiment form."
   }
+  ,
+  {
+    "task_id": "T031",
+    "title": "Run notes — inline edit on experiment detail",
+    "status": "completed",
+    "dependencies": ["T022"],
+    "affected_modules": ["ExperimentModel", "RunController", "ExportService", "Views"],
+    "affected_files": [
+      "app/models/experiment_model.py",
+      "app/controllers/run_controller.py",
+      "app/services/export_service.py",
+      "app/views/templates/experiments/detail.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "ExperimentModel.update_run_notes(run_id, notes) updates experiment_runs.notes in place. New endpoint: POST /experiments/<id>/update-notes (JSON body {notes: str}; returns JSON {ok: true}). Inline editor in detail.html uses fetch() to save without a page reload. ExportService.export_json() accepts run_notes kwarg and emits 'run_notes' as a top-level field in the dataset envelope."
+  }
+  ,
+  {
+    "task_id": "T032",
+    "title": "Inflated API token heuristic + retroactive recompute-tokens endpoint",
+    "status": "completed",
+    "dependencies": ["T027", "T022"],
+    "affected_modules": ["QueueService", "ExperimentModel", "RunController", "Views"],
+    "affected_files": [
+      "app/services/queue_service.py",
+      "app/models/experiment_model.py",
+      "app/controllers/run_controller.py",
+      "app/views/templates/experiments/detail.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "Some providers (notably Qwen reasoning models) bundle undisclosed reasoning tokens into completion_tokens. Detection: api_output / max(1, len(response_text)) > threshold. Thresholds: 1.5 for logographic scripts (zh/ja/ko + variants), 2.0 for all others. When triggered, visible_output_tokens is set to tiktoken cl100k_base count of response_text; reasoning_tokens recalculated as max(0, api_output - local_toks). Applied live in QueueService._exec_llm_call() and retroactively via ExperimentModel.recompute_visible_tokens(run_id) which returns {checked, updated, skipped, unchanged}. New endpoint: POST /experiments/<id>/recompute-tokens (returns JSON summary). Button added to detail.html for manual trigger."
+  }
+  ,
+  {
+    "task_id": "T033",
+    "title": "Reasoning override per model in experiment creation",
+    "status": "completed",
+    "dependencies": ["T004", "T022"],
+    "affected_modules": ["ExperimentController", "QueueService", "LLMService", "Views"],
+    "affected_files": [
+      "app/controllers/experiment_controller.py",
+      "app/services/queue_service.py",
+      "app/services/llm_service.py",
+      "app/views/templates/experiments/new.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "New form fields: reasoning_override_<model_id> per model (''/on/off). ExperimentController reads them into reasoning_overrides dict and stores value in each llm_call payload as reasoning_override. QueueService._exec_llm_call() reads override from payload before calling LLM; 'on' sets is_reasoning=True, 'off' sets is_reasoning=False, '' leaves model default. LLMService: _openai_supports_reasoning_effort() detects o1/o3/o4/gpt-5* models; _openai_low_effort() returns 'low' (or 'medium' for gpt-5.5 which does not accept 'low'); reasoning_effort='high' when on, _openai_low_effort when off. UI: per-model select in new.html + global preset select that syncs all per-model selects at once."
+  }
+  ,
+  {
+    "task_id": "T034",
+    "title": "CorrectnessService — factual response evaluation",
+    "status": "completed",
+    "dependencies": ["T004"],
+    "affected_modules": ["CorrectnessService"],
+    "affected_files": [
+      "app/services/correctness_service.py"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "New service module (no class). evaluate(response_text, prompt_id, language_name, extra_any_variants, extra_target_variants) -> dict|None. Returns {correct, in_target_language, language_leakage} or None when prompt_id has no registered expected answers. correct = factual answer present in any recognised language form. in_target_language = answer uses the target language's surface form. language_leakage = correct AND NOT in_target_language. Matching is substring-based after _normalize() which: maps 8 non-ASCII numeral blocks (Arabic-Indic, Eastern Arabic, Devanagari, Thai, Bengali, Gurmukhi, Gujarati, Full-width) to ASCII digits; lowercases; strips punctuation; collapses whitespace. EXPECTED_ANSWERS dict keyed by prompt_id with any_language_variants + target_language_variants per language. Supports extra_any_variants / extra_target_variants for MAGI-discovered runtime variants. Currently registered: prompt 18 (capital of France), 19 (placeholder), 20 (HTTP acronym), 21 (boolean yes)."
+  }
 ]
 ```

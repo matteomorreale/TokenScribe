@@ -88,14 +88,19 @@ POST /experiments/<id>/redo-model             redo all calls for one model (form
 POST /experiments/<id>/replace-model          swap one model for another (form: old_model_id, new_model_id, save_history)
 POST /experiments/<id>/revalidate-status      recompute run status from DB state (fixes stuck runs)
 POST /experiments/<id>/add-models             add new models to a completed/partial/stopped run
+POST /experiments/<id>/update-notes           update run notes (JSON body: {notes: str}); returns JSON
+POST /experiments/<id>/recompute-tokens       retroactively fix inflated visible_output_tokens via tiktoken heuristic
 ```
 
 ### POST /studies/{study_id}/experiments/new — Form Fields
 
 ```text
-model_ids      list[int]  models to call
-repetitions    int        repetitions per cell (default 3, range 1–10)
-force_magi     "1"        force MAGI Phase 1 recomputation even if already computed
+model_ids                  list[int]  models to call
+repetitions                int        repetitions per cell (default 3, range 1–10)
+force_magi                 "1"        force MAGI Phase 1 recomputation even if already computed
+reasoning_override_<id>    ""         per-model reasoning override: "" = use model config,
+                                       "on" = force reasoning ON, "off" = force reasoning OFF
+                                       (one field per model_id; absent = use default)
 ```
 
 Each (prompt × model × language) cell generates `repetitions` queue items with `repetition_index` 0..N−1.
@@ -168,6 +173,7 @@ Note: `magi_judges` per-judge breakdown is available in JSON export only (nested
 
 ```json
 {
+  "run_notes": "",
   "token_results": [ /* one row per run×prompt×language×model */ ],
   "pei_results": [ /* one row per run×prompt */ ],
   "pei_group_results": [ /* one row per run×prompt×group */ ],

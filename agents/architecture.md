@@ -24,10 +24,11 @@ TokenScribe/
 │   │   └── settings_model.py
 │   ├── services/                # Business logic layer
 │   │   ├── llm_service.py       # Unified LLM provider interface (8 providers); model_not_found + rate-limit fallback
-│   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback
+│   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback; inflated-token heuristic
 │   │   ├── scoring_service.py   # SFS (DSF+RTF), LER, PEI, MAGI Phase 1 computation
 │   │   ├── magi_service.py      # MAGI Phase 2: three-judge LLM panel with retry
 │   │   ├── crypto_service.py    # Fernet AES-128-CBC symmetric encryption for API keys
+│   │   ├── correctness_service.py  # Response correctness evaluation (correct / in_target_language / language_leakage)
 │   │   └── export_service.py    # Dataset export (CSV, JSON)
 │   ├── views/
 │   │   └── templates/           # Jinja2 HTML templates (MVC Views)
@@ -74,8 +75,8 @@ TokenScribe/
 
 ### Experiment Execution
 
-- controllers/experiment_controller.py — create/delete runs; readiness check on GET /new; `repetitions` form param
-- controllers/run_controller.py — JSON queue-status polling, stop/restart/resume/retry, redo-model, replace-model, revalidate-status
+- controllers/experiment_controller.py — create/delete runs; readiness check on GET /new; `repetitions` + `reasoning_override_<id>` form params
+- controllers/run_controller.py — JSON queue-status polling, stop/restart/resume/retry, redo-model, replace-model, add-models, update-notes, recompute-tokens, revalidate-status
 - models/experiment_model.py
 - models/queue_model.py
 - services/llm_service.py
@@ -154,6 +155,8 @@ TokenScribe/
 - `reconstruct_llm_payloads(run_id, model_id)` — rebuilds llm_call payloads from token_results + run_translation_snapshot; used for runs created before the queue system (no run_queue rows)
 - `get_run_model_ids(run_id)` → `set[int]` — returns all model_ids already present in the run (from both `token_results` and `run_queue` llm_call items)
 - `build_llm_payloads_from_snapshot(run_id, model_id, repetitions)` → `list[dict]` — generates llm_call payloads for a new model using the frozen `run_translation_snapshot`; used by add-models flow
+- `update_run_notes(run_id, notes)` — updates `experiment_runs.notes` in place (used by the inline notes editor on detail.html)
+- `recompute_visible_tokens(run_id)` → `dict` — retroactively applies the inflated-API-count heuristic to all stored `token_results`; returns `{checked, updated, skipped, unchanged}`; overwrites `visible_output_tokens` with a tiktoken cl100k_base count whenever `api_reported_output_tokens / max(1, len(response_text))` exceeds the script-aware ceiling (2.0 alphabetic, 1.5 logographic)
 
 ### QueueModel
 
@@ -172,6 +175,20 @@ TokenScribe/
 - `__init__(env_path)` — reads `TOKENSCRIBE_ENCRYPTION_KEY` from env; auto-generates and appends key to `.env` on first run
 - `encrypt(value)` → str — Fernet-encrypts a plaintext string
 - `decrypt(value)` → str — decrypts a Fernet token; returns value unchanged for pre-encryption plain-text (transparent migration path)
+
+### CorrectnessService
+
+Module-level (no class), imported as `from app.services.correctness_service import evaluate`.
+
+- `evaluate(response_text, prompt_id, language_name, extra_any_variants, extra_target_variants)` → `dict | None`
+  — returns `{correct, in_target_language, language_leakage}` or `None` if no expected answers are registered for `prompt_id`
+  — `correct` — the expected factual answer appears in the response (any language form)
+  — `in_target_language` — the answer uses the target language form
+  — `language_leakage` — correct fact but in the wrong language (cross-language confusion)
+  — `extra_any_variants` / `extra_target_variants` — runtime-injected MAGI-discovered variants; merged with static registry
+  — matching is substring-based after `_normalize()` (lowercase, numeral-map, strip punctuation, collapse whitespace)
+- `EXPECTED_ANSWERS` — dict keyed by `prompt_id`; each entry has `any_language_variants: list[str]` and `target_language_variants: dict[str, list[str]]`; extend to add new prompts
+- `_normalize(text)` — normalises text before comparison; maps 8 non-ASCII numeral blocks to ASCII digits; does NOT touch non-Latin scripts
 
 ## UX Patterns
 
@@ -259,6 +276,16 @@ result raises `RateLimitError`; the worker loop catches it and calls `QueueModel
 OpenAI Responses API fallback: `_call_openai()` catches a "not a chat model" / "v1/completions" error
 and retries via `_call_openai_responses()` (using `client.responses.create()` with `reasoning.effort`).
 This transparently handles models only available on the Responses API (e.g. gpt-5.4-pro).
+
+**Reasoning override** (`reasoning_override` in llm_call payload): `""` (default) — model's own `is_reasoning` flag governs behaviour; `"on"` — force `is_reasoning=True` for this call; `"off"` — force `is_reasoning=False`.
+For OpenAI models that accept `reasoning_effort` (`o1`/`o3`/`o4`/`gpt-5*`): `"on"` → `reasoning_effort="high"`, `"off"` → `reasoning_effort="low"` (or `"medium"` for gpt-5.5 which does not support `"low"`).
+Set per model in the new-experiment form via `reasoning_override_<model_id>` select; a global preset syncs all selects at once.
+
+**Inflated API token count heuristic** (in `QueueService._exec_llm_call()` and `ExperimentModel.recompute_visible_tokens()`):
+Some providers (notably Qwen reasoning models) bundle undisclosed reasoning tokens into `completion_tokens`, making `api_reported_output_tokens` disproportionately large.
+Detection: if `api_output / max(1, len(response_text)) > threshold` (2.0 for alphabetic scripts, 1.5 for logographic CJK scripts), the provider count is deemed inflated.
+Correction: `visible_output_tokens` is overwritten with a local tiktoken `cl100k_base` count; `reasoning_tokens` is recalculated as `max(0, api_output − local_toks)`.
+The same logic is available retroactively via `ExperimentModel.recompute_visible_tokens()` (triggered by `POST /experiments/<id>/recompute-tokens`).
 
 ## External Dependencies
 

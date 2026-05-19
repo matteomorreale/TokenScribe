@@ -426,7 +426,7 @@ class MAGIService:
         }
 
     # ------------------------------------------------------------------
-    # Answer discovery (single-judge, triggered on correct=False)
+    # Answer discovery — 3-judge panel, majority vote (≥2/3)
     # ------------------------------------------------------------------
 
     _ANSWER_DISCOVERY_PROMPT = """\
@@ -445,43 +445,77 @@ Respond with a SINGLE JSON object — no explanation, no markdown fences:
 {{"is_correct": true or false, "canonical_form": "the answer text" or null}}
 """
 
-    def discover_answer_variant(
-        self,
-        prompt_text: str,
-        language: str,
-        response_text: str,
-        llm_service,
-        model_info: dict,
-        log_service=None,
-        context_ref: dict | None = None,
+    def _call_discovery_once(
+        self, prompt: str, model_info: dict, llm_service, judge_name: str
     ) -> dict:
-        """
-        Ask one judge whether *response_text* is a correct answer to *prompt_text*.
-        Returns {"is_correct": bool, "canonical_form": str|None, "judge_model": str}.
-        """
-        prompt = self._ANSWER_DISCOVERY_PROMPT.format(
-            language=language,
-            prompt_text=prompt_text,
-            response_text=response_text,
-        )
+        """Single judge attempt for answer discovery. Returns parsed result or failure."""
         for attempt in range(1, MAX_RETRIES + 1):
             result = self._call_once(prompt, model_info, llm_service, attempt)
             raw = result.get("raw_response") or ""
             parsed = self._parse_json_bool_response(raw)
             if parsed is not None:
                 return {
-                    "is_correct":     parsed.get("is_correct", False),
-                    "canonical_form": parsed.get("canonical_form"),
+                    "judge_name":     judge_name,
                     "judge_model":    model_info.get("name", ""),
+                    "is_correct":     parsed["is_correct"],
+                    "canonical_form": parsed.get("canonical_form"),
+                    "error":          None,
                 }
             logger.warning(
-                "[MAGI:discovery] attempt %d/%d failed to parse — raw: %r",
-                attempt, MAX_RETRIES, raw[:200],
+                "[MAGI:discovery:%s] attempt %d/%d parse failed — raw: %r",
+                judge_name, attempt, MAX_RETRIES, raw[:200],
             )
-        return {"is_correct": False, "canonical_form": None, "judge_model": model_info.get("name", "")}
+        return {
+            "judge_name": judge_name, "judge_model": model_info.get("name", ""),
+            "is_correct": False, "canonical_form": None,
+            "error": f"All {MAX_RETRIES} parse attempts failed",
+        }
+
+    def discover_answer_variant(
+        self,
+        prompt_text: str,
+        language: str,
+        response_text: str,
+        llm_service,
+        judge_models: list[dict],
+        log_service=None,
+        context_ref: dict | None = None,
+    ) -> dict:
+        """
+        3-judge panel with majority vote (≥2 of 3) for answer correctness.
+
+        Returns:
+          is_correct     — True if ≥2 judges agree the answer is correct
+          canonical_form — surface form from the first judge who said True (or None)
+          judges         — per-judge breakdown dict
+        """
+        prompt = self._ANSWER_DISCOVERY_PROMPT.format(
+            language=language,
+            prompt_text=prompt_text,
+            response_text=response_text,
+        )
+        judges = {}
+        for name, model_info in zip(JUDGE_NAMES, judge_models[:3]):
+            verdict = self._call_discovery_once(prompt, model_info, llm_service, name)
+            judges[name] = verdict
+
+        positive = [v for v in judges.values() if v["is_correct"]]
+        is_correct = len(positive) >= 2
+
+        # Canonical form: first positive judge's extraction (or None)
+        canonical_form = next(
+            (v["canonical_form"] for v in positive if v["canonical_form"]),
+            None,
+        )
+
+        logger.info(
+            "[MAGI:discovery] panel result: is_correct=%s (%d/3 agree) canonical='%s'",
+            is_correct, len(positive), canonical_form,
+        )
+        return {"is_correct": is_correct, "canonical_form": canonical_form, "judges": judges}
 
     # ------------------------------------------------------------------
-    # Named-entity labeling (single-judge, run once per prompt×language)
+    # Named-entity labeling — 3-judge panel, majority vote per entity
     # ------------------------------------------------------------------
 
     _NE_LABELING_PROMPT = """\
@@ -505,23 +539,10 @@ Respond with a JSON array — no explanation, no markdown fences:
 If the prompt contains no named entities, respond with an empty array: []
 """
 
-    def label_named_entities(
-        self,
-        prompt_text: str,
-        language: str,
-        llm_service,
-        model_info: dict,
-        log_service=None,
-        context_ref: dict | None = None,
+    def _call_ne_labeling_once(
+        self, prompt: str, model_info: dict, llm_service, judge_name: str
     ) -> list[dict]:
-        """
-        Ask one judge to label named-entity expectations for *prompt_text* in *language*.
-        Returns a list of {entity, expected_form, allow_original} dicts (may be empty).
-        """
-        prompt = self._NE_LABELING_PROMPT.format(
-            prompt_text=prompt_text,
-            language=language,
-        )
+        """Single judge attempt for NE labeling. Returns cleaned list or []."""
         for attempt in range(1, MAX_RETRIES + 1):
             result = self._call_once(prompt, model_info, llm_service, attempt)
             raw = result.get("raw_response") or ""
@@ -531,16 +552,85 @@ If the prompt contains no named entities, respond with an empty array: []
                 for item in parsed:
                     if isinstance(item, dict) and item.get("entity") and item.get("expected_form"):
                         cleaned.append({
-                            "entity":        str(item["entity"]),
-                            "expected_form": str(item["expected_form"]),
+                            "entity":        str(item["entity"]).strip(),
+                            "expected_form": str(item["expected_form"]).strip(),
                             "allow_original": bool(item.get("allow_original", False)),
                         })
                 return cleaned
             logger.warning(
-                "[MAGI:ne_labeling] attempt %d/%d failed to parse — raw: %r",
-                attempt, MAX_RETRIES, raw[:200],
+                "[MAGI:ne_labeling:%s] attempt %d/%d parse failed — raw: %r",
+                judge_name, attempt, MAX_RETRIES, raw[:200],
             )
         return []
+
+    def label_named_entities(
+        self,
+        prompt_text: str,
+        language: str,
+        llm_service,
+        judge_models: list[dict],
+        log_service=None,
+        context_ref: dict | None = None,
+    ) -> list[dict]:
+        """
+        3-judge panel with per-entity majority vote (≥2 of 3) for NE expectations.
+
+        An entity is included in the result only if ≥2 judges independently identify it.
+        expected_form: most common form among agreeing judges (first if tie).
+        allow_original: True if ≥2 of the agreeing judges say True.
+        """
+        prompt = self._NE_LABELING_PROMPT.format(
+            prompt_text=prompt_text,
+            language=language,
+        )
+        # Collect per-judge entity lists
+        all_judge_results: list[list[dict]] = []
+        for name, model_info in zip(JUDGE_NAMES, judge_models[:3]):
+            entities = self._call_ne_labeling_once(prompt, model_info, llm_service, name)
+            all_judge_results.append(entities)
+
+        # Group by normalised entity name, count votes
+        from collections import Counter, defaultdict
+        # entity_key → list of {expected_form, allow_original} from each judge that named it
+        votes: dict[str, list[dict]] = defaultdict(list)
+        entity_display: dict[str, str] = {}  # normalised key → display form (first seen)
+        for judge_entities in all_judge_results:
+            seen_in_this_judge: set[str] = set()
+            for e in judge_entities:
+                key = e["entity"].lower().strip()
+                if key in seen_in_this_judge:
+                    continue  # deduplicate within one judge's response
+                seen_in_this_judge.add(key)
+                votes[key].append({
+                    "expected_form": e["expected_form"],
+                    "allow_original": e["allow_original"],
+                })
+                if key not in entity_display:
+                    entity_display[key] = e["entity"]
+
+        result = []
+        for key, judge_votes in votes.items():
+            if len(judge_votes) < 2:
+                continue  # majority not reached
+            # expected_form: most common; ties broken by first occurrence
+            form_counts = Counter(v["expected_form"] for v in judge_votes)
+            best_form = form_counts.most_common(1)[0][0]
+            # allow_original: True if majority of agreeing judges say so
+            allow_count = sum(1 for v in judge_votes if v["allow_original"])
+            allow = allow_count >= (len(judge_votes) / 2)
+            result.append({
+                "entity":        entity_display[key],
+                "expected_form": best_form,
+                "allow_original": allow,
+            })
+
+        logger.info(
+            "[MAGI:ne_labeling] panel result: %d/%d entities passed majority vote for lang=%s",
+            len(result),
+            len(votes),
+            language,
+        )
+        return result
 
     # ------------------------------------------------------------------
     # JSON parse helpers for structured single-judge outputs

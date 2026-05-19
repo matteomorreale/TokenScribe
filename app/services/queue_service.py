@@ -274,6 +274,22 @@ class QueueService:
             magi_judges=panel["judges"],
         )
 
+    def _load_judge_models(self, settings: dict, em) -> list[dict]:
+        """Return the list of configured MAGI judge model dicts (up to 3, skipping missing ones)."""
+        judge_id_vals = [
+            settings.get("magi_judge_balthasar_id"),
+            settings.get("magi_judge_caspar_id"),
+            settings.get("magi_judge_melchior_id"),
+        ]
+        models = []
+        for jid in judge_id_vals:
+            if not jid:
+                continue
+            m = em.get_model_by_id(int(jid))
+            if m:
+                models.append(m)
+        return models
+
     def _get_fallback_model(self, provider_name: str, exclude_model_id: int,
                             original_model_name: str = "") -> dict | None:
         conn = self._db.get_connection()
@@ -547,30 +563,28 @@ class QueueService:
             raise RuntimeError(msg)
 
     def _exec_magi_answer_discovery(self, payload: dict) -> None:
-        """Ask one MAGI judge whether an unrecognised response is factually correct.
-        If yes, store the canonical variant and retroactively mark the row as correct."""
+        """3-judge majority vote to determine if an unrecognised response is correct.
+        Variant is inserted only if ≥2/3 judges agree it is correct."""
         from app.services.magi_service import MAGIService
         from app.services.llm_service import LLMService
 
-        run_id          = int(payload["run_id"])
-        prompt_id       = int(payload["prompt_id"])
-        language_id     = int(payload["language_id"])
-        language_name   = payload.get("language_name", "")
-        token_result_id = int(payload["token_result_id"])
+        run_id           = int(payload["run_id"])
+        prompt_id        = int(payload["prompt_id"])
+        language_id      = int(payload["language_id"])
+        language_name    = payload.get("language_name", "")
+        token_result_id  = int(payload["token_result_id"])
         prompt_base_text = payload.get("prompt_base_text", "")
-        response_text   = payload.get("response_text", "")
+        response_text    = payload.get("response_text", "")
 
         settings = SettingsModel(self._db, crypto=self._crypto).get_all()
         em       = ExperimentModel(self._db)
 
-        # Use Balthasar (first judge) as the discovery judge
-        judge_id = settings.get("magi_judge_balthasar_id")
-        if not judge_id:
-            logger.warning("MAGI discovery: Balthasar not configured — skipping")
-            return
-        model_info = em.get_model_by_id(int(judge_id))
-        if not model_info:
-            logger.warning("MAGI discovery: Balthasar model ID=%s not found — skipping", judge_id)
+        judge_models = self._load_judge_models(settings, em)
+        if len(judge_models) < 2:
+            logger.warning(
+                "MAGI discovery: only %d judge(s) configured, need ≥2 for majority vote — skipping",
+                len(judge_models),
+            )
             return
 
         llm_svc  = LLMService(settings, log_service=self._log)
@@ -581,64 +595,62 @@ class QueueService:
             language=language_name,
             response_text=response_text,
             llm_service=llm_svc,
-            model_info=model_info,
+            judge_models=judge_models,
             log_service=self._log,
             context_ref={"run_id": run_id, "prompt_id": prompt_id, "token_result_id": token_result_id},
         )
 
         if result["is_correct"] and result["canonical_form"]:
             variant = result["canonical_form"].strip()
+            judge_names = "/".join(
+                v["judge_name"] for v in result["judges"].values() if v["is_correct"]
+            )
             inserted = em.insert_magi_answer_variant(
                 prompt_id=prompt_id,
-                language_id=None,  # cross-language: this form is correct regardless of language
+                language_id=None,   # cross-language: valid regardless of language
                 variant=variant,
-                judge_name="balthasar",
-                judge_model=model_info.get("name", ""),
+                judge_name=judge_names,
+                judge_model=", ".join(
+                    v["judge_model"] for v in result["judges"].values() if v["is_correct"]
+                ),
             )
             em.update_answer_correct_by_row(token_result_id)
             if inserted:
                 logger.info(
-                    "MAGI discovery: new variant '%s' for prompt=%d (run=%d row=%d)",
-                    variant, prompt_id, run_id, token_result_id,
-                )
-            else:
-                logger.debug(
-                    "MAGI discovery: variant '%s' already known for prompt=%d",
-                    variant, prompt_id,
+                    "MAGI discovery: new variant '%s' for prompt=%d (run=%d row=%d) — agreed by %s",
+                    variant, prompt_id, run_id, token_result_id, judge_names,
                 )
         else:
             logger.info(
-                "MAGI discovery: response confirmed incorrect for prompt=%d row=%d",
+                "MAGI discovery: response confirmed incorrect for prompt=%d row=%d (majority)",
                 prompt_id, token_result_id,
             )
 
     def _exec_magi_ne_labeling(self, payload: dict) -> None:
-        """Ask one MAGI judge to label named-entity expectations for (prompt, language)."""
+        """3-judge majority vote for NE labeling. Entity included only if ≥2/3 judges agree."""
         from app.services.magi_service import MAGIService
         from app.services.llm_service import LLMService
 
-        run_id       = int(payload["run_id"])
-        prompt_id    = int(payload["prompt_id"])
-        language_id  = int(payload["language_id"])
+        run_id        = int(payload["run_id"])
+        prompt_id     = int(payload["prompt_id"])
+        language_id   = int(payload["language_id"])
         language_name = payload.get("language_name", "")
-        base_text    = payload.get("base_text", "")
+        base_text     = payload.get("base_text", "")
 
         settings = SettingsModel(self._db, crypto=self._crypto).get_all()
         em       = ExperimentModel(self._db)
 
-        # Skip if already labeled
         if em.get_ne_labeling_status(prompt_id, language_id) == "done":
             return
 
         em.set_ne_labeling_status(prompt_id, language_id, "pending")
 
-        judge_id = settings.get("magi_judge_balthasar_id")
-        if not judge_id:
-            logger.warning("MAGI NE labeling: Balthasar not configured — skipping")
-            em.set_ne_labeling_status(prompt_id, language_id, "failed")
-            return
-        model_info = em.get_model_by_id(int(judge_id))
-        if not model_info:
+        judge_models = self._load_judge_models(settings, em)
+        if len(judge_models) < 2:
+            logger.warning(
+                "MAGI NE labeling: only %d judge(s) configured, need ≥2 — skipping",
+                len(judge_models),
+            )
             em.set_ne_labeling_status(prompt_id, language_id, "failed")
             return
 
@@ -649,21 +661,24 @@ class QueueService:
             prompt_text=base_text,
             language=language_name,
             llm_service=llm_svc,
-            model_info=model_info,
+            judge_models=judge_models,
             log_service=self._log,
             context_ref={"run_id": run_id, "prompt_id": prompt_id, "language_id": language_id},
         )
 
+        judge_names_str = "/".join(
+            m.get("name", "") for m in judge_models
+        )
         em.insert_ne_expectations(
             prompt_id=prompt_id,
             language_id=language_id,
             expectations=expectations,
-            judge_name="balthasar",
-            judge_model=model_info.get("name", ""),
+            judge_name=judge_names_str,
+            judge_model=judge_names_str,
         )
         em.set_ne_labeling_status(prompt_id, language_id, "done")
         logger.info(
-            "MAGI NE labeling: %d entities for prompt=%d lang=%s (run=%d)",
+            "MAGI NE labeling: %d entities (majority-voted) for prompt=%d lang=%s (run=%d)",
             len(expectations), prompt_id, language_name, run_id,
         )
 
