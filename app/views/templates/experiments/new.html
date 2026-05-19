@@ -14,6 +14,11 @@
     <p class="ts-page-subtitle">Study: {{ study.name }}</p>
   </div>
 </div>
+{% if source_run_id %}
+<div style="background:rgba(99,102,241,.07); border:1px solid rgba(99,102,241,.3); border-radius:6px; padding:.65rem .85rem; margin-bottom:1rem; font-size:.82rem; color:var(--ts-accent);">
+  Duplicating Run #{{ source_run_id }} — modify any parameters below before launching.
+</div>
+{% endif %}
 
 <div class="ts-grid ts-grid-2" style="align-items:start; gap:1.5rem;">
   <div>
@@ -119,7 +124,9 @@
             <div style="display:flex; align-items:center; gap:.5rem; width:100%;">
               <label class="ts-checkbox-item" style="flex:1; {{ 'opacity:.45; cursor:not-allowed;' if blocked else '' }}"
                      title="{{ 'Riservato a MAGI Judge Panel' if is_judge else ('API key non configurata per ' + m.provider_name if not has_key else '') }}">
-                <input type="checkbox" name="model_ids" value="{{ m.id }}" {{ 'disabled' if blocked else '' }}>
+                <input type="checkbox" name="model_ids" value="{{ m.id }}"
+                     {{ 'disabled' if blocked else '' }}
+                     {{ 'checked' if (not blocked) and (preselected_model_ids is defined) and (m.id in preselected_model_ids) else '' }}>
                 {{ m.name }}
                 {% if is_judge %}<span style="font-size:.7rem; color:var(--ts-text-muted);">[MAGI]</span>{% endif %}
                 {% if m.is_reasoning %}<span style="font-size:.65rem; font-weight:700; color:var(--ts-accent); margin-left:.2rem;" title="Reasoning-capable">R</span>{% endif %}
@@ -138,14 +145,17 @@
       <div class="ts-form-group">
         <label class="ts-label" for="repetitions">Repetitions per cell</label>
         <input class="ts-input" type="number" id="repetitions" name="repetitions"
-               value="3" min="1" max="10" style="width:6rem;">
+               value="{{ prefilled_repetitions if prefilled_repetitions is defined else 3 }}"
+               min="1" max="10" style="width:6rem;">
         <small style="display:block; margin-top:.3rem; color:var(--ts-text-muted); font-size:.75rem;">
           Number of independent LLM calls per (prompt × language × model) cell. Min 1, max 10.
         </small>
       </div>
       <div class="ts-form-group">
         <label class="ts-label" for="notes">Notes (optional)</label>
-        <input class="ts-input" type="text" id="notes" name="notes" placeholder="e.g. First run with Llama models">
+        <input class="ts-input" type="text" id="notes" name="notes"
+               placeholder="e.g. First run with Llama models"
+               value="{{ prefilled_notes if prefilled_notes is defined else '' }}">
       </div>
       <div class="ts-form-group" style="margin-bottom:.85rem;">
         <label class="ts-checkbox-item" title="Re-compute Phase 1 scores and re-queue Phase 2 LLM judge calls even if MAGI scores already exist for these candidates">

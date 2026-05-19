@@ -21,8 +21,15 @@ from app.models.selection_score_model import SelectionScoreModel
 logger = logging.getLogger(__name__)
 
 
+_NUM_WORKERS = 20  # number of parallel worker threads
+
+
 class RateLimitError(Exception):
     """Sollevato quando un provider risponde 429 — l'item va rimesso in fondo alla coda."""
+
+
+class _DependencyNotReady(Exception):
+    """Raised when an item's prerequisites are not yet complete; the item will be requeued."""
 
 _PROVIDER_KEY_MAP = {
     "openai":    "openai_api_key",
@@ -36,11 +43,13 @@ _PROVIDER_KEY_MAP = {
 
 # Timeout per tipo di operazione (secondi)
 _TIMEOUTS = {
-    "snapshot_translations": 15,
+    "snapshot_translations":  15,
     "magi_phase2":           150,
     "llm_call":              150,
-    "compute_pei":           45,
-    "finalize_pei_groups":   30,
+    "magi_answer_discovery":  60,
+    "magi_ne_labeling":       60,
+    "compute_pei":            45,
+    "finalize_pei_groups":    30,
 }
 
 _POLL_INTERVAL = 2  # secondi tra un poll e il successivo quando la coda è vuota
@@ -79,18 +88,22 @@ class QueueService:
         self._log = log_service
         self._crypto = crypto_service
         self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._worker_loop,
-            daemon=True,
-            name="ts-queue-worker",
-        )
+        self._threads = [
+            threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"ts-queue-worker-{i}",
+            )
+            for i in range(_NUM_WORKERS)
+        ]
         # ScoringService è stateless/locale — istanza condivisa sicura
         from app.services.scoring_service import ScoringService
         self._scorer = ScoringService()
 
     def start(self) -> None:
-        self._thread.start()
-        logger.info("QueueService started (daemon thread)")
+        for t in self._threads:
+            t.start()
+        logger.info("QueueService started (%d worker threads)", _NUM_WORKERS)
 
     # ------------------------------------------------------------------
     # Worker loop
@@ -131,6 +144,12 @@ class QueueService:
                                 message=f"Item {item_id} op={op_type} run={run_id} timed out after {timeout}s",
                                 context_ref={"run_id": run_id, "item_id": item_id},
                             )
+                    except _DependencyNotReady:
+                        qm.requeue_for_dependency(item_id)
+                        logger.debug(
+                            "Queue: item %d DEFERRED — dependencies not ready (op=%s run=%d)",
+                            item_id, op_type, run_id,
+                        )
                     except RateLimitError as exc:
                         requeued = qm.requeue_at_end(item_id)
                         if requeued:
@@ -178,11 +197,13 @@ class QueueService:
 
     def _dispatch(self, op_type: str, payload: dict) -> None:
         dispatch_map = {
-            "snapshot_translations": self._exec_snapshot,
-            "magi_phase2":           self._exec_magi_phase2,
-            "llm_call":              self._exec_llm_call,
-            "compute_pei":           self._exec_compute_pei,
-            "finalize_pei_groups":   self._exec_finalize_pei_groups,
+            "snapshot_translations":  self._exec_snapshot,
+            "magi_phase2":            self._exec_magi_phase2,
+            "llm_call":               self._exec_llm_call,
+            "magi_answer_discovery":  self._exec_magi_answer_discovery,
+            "magi_ne_labeling":       self._exec_magi_ne_labeling,
+            "compute_pei":            self._exec_compute_pei,
+            "finalize_pei_groups":    self._exec_finalize_pei_groups,
         }
         handler = dispatch_map.get(op_type)
         if handler is None:
@@ -370,6 +391,10 @@ class QueueService:
                 response_valid=False,
                 repetition_index=repetition_index,
                 attempt_status="failed",
+                reasoning_override_requested=_override or None,
+                total_query_time_ms=result.total_query_time_ms,
+                time_to_first_token_ms=result.time_to_first_token_ms,
+                time_to_completion_ms=result.time_to_completion_ms,
             )
             raise RuntimeError(f"LLM call failed: {result.error}")
 
@@ -415,7 +440,7 @@ class QueueService:
 
         is_valid = has_text
 
-        em.insert_token_result(
+        row_id = em.insert_token_result(
             run_id=run_id,
             prompt_id=prompt_id,
             language_id=language_id,
@@ -429,7 +454,72 @@ class QueueService:
             response_valid=is_valid,
             repetition_index=repetition_index,
             attempt_status="success" if is_valid else "failed",
+            reasoning_override_requested=_override or None,
+            total_query_time_ms=result.total_query_time_ms,
+            time_to_first_token_ms=result.time_to_first_token_ms,
+            time_to_completion_ms=result.time_to_completion_ms,
         )
+
+        if is_valid and row_id:
+            language_name = payload.get("language_name", "")
+            qm = QueueModel(self._db)
+
+            # --- Correctness (static + MAGI-discovered dynamic variants) ---
+            try:
+                from app.services.correctness_service import evaluate as _eval_correctness
+                extra_any    = em.get_magi_answer_variants(prompt_id, language_id=None)
+                extra_target = em.get_magi_answer_variants(prompt_id, language_id=language_id)
+                metrics = _eval_correctness(
+                    response_text, prompt_id, language_name,
+                    extra_any_variants=extra_any,
+                    extra_target_variants=extra_target,
+                )
+                if metrics is not None:
+                    em.update_correctness_metrics(row_id, metrics)
+                    # Queue MAGI discovery when the answer was not recognised
+                    if not metrics["correct"]:
+                        base_text = em.get_prompt_base_text(prompt_id)
+                        if base_text:
+                            qm.enqueue(
+                                run_id=run_id,
+                                operation_type="magi_answer_discovery",
+                                item_key=f"magi_answer:tr{row_id}",
+                                payload={
+                                    "run_id":           run_id,
+                                    "prompt_id":        prompt_id,
+                                    "prompt_base_text": base_text,
+                                    "language_id":      language_id,
+                                    "language_name":    language_name,
+                                    "response_text":    response_text,
+                                    "token_result_id":  row_id,
+                                },
+                                priority=2,
+                            )
+            except Exception:
+                logger.exception(
+                    "Correctness evaluation failed for prompt=%d lang=%s row=%d",
+                    prompt_id, language_name or "?", row_id,
+                )
+
+            # --- OLF (Output Language Fidelity) ---
+            try:
+                from app.services.olf_service import compute_olf
+                olf = compute_olf(response_text, language_name)
+                if olf is not None:
+                    em.update_olf_score(row_id, olf)
+            except Exception:
+                logger.exception("OLF computation failed for row=%d", row_id)
+
+            # --- NEPR (Named Entity Preservation Rate) ---
+            try:
+                if em.get_ne_labeling_status(prompt_id, language_id) == "done":
+                    from app.services.ne_service import compute_nepr
+                    expectations = em.get_ne_expectations(prompt_id, language_id)
+                    nepr = compute_nepr(response_text, expectations)
+                    if nepr is not None:
+                        em.update_nepr_score(row_id, nepr)
+            except Exception:
+                logger.exception("NEPR computation failed for row=%d", row_id)
 
         if not is_valid:
             raw_len = len(result.response_text or "")
@@ -456,9 +546,133 @@ class QueueService:
                 )
             raise RuntimeError(msg)
 
+    def _exec_magi_answer_discovery(self, payload: dict) -> None:
+        """Ask one MAGI judge whether an unrecognised response is factually correct.
+        If yes, store the canonical variant and retroactively mark the row as correct."""
+        from app.services.magi_service import MAGIService
+        from app.services.llm_service import LLMService
+
+        run_id          = int(payload["run_id"])
+        prompt_id       = int(payload["prompt_id"])
+        language_id     = int(payload["language_id"])
+        language_name   = payload.get("language_name", "")
+        token_result_id = int(payload["token_result_id"])
+        prompt_base_text = payload.get("prompt_base_text", "")
+        response_text   = payload.get("response_text", "")
+
+        settings = SettingsModel(self._db, crypto=self._crypto).get_all()
+        em       = ExperimentModel(self._db)
+
+        # Use Balthasar (first judge) as the discovery judge
+        judge_id = settings.get("magi_judge_balthasar_id")
+        if not judge_id:
+            logger.warning("MAGI discovery: Balthasar not configured — skipping")
+            return
+        model_info = em.get_model_by_id(int(judge_id))
+        if not model_info:
+            logger.warning("MAGI discovery: Balthasar model ID=%s not found — skipping", judge_id)
+            return
+
+        llm_svc  = LLMService(settings, log_service=self._log)
+        magi_svc = MAGIService()
+
+        result = magi_svc.discover_answer_variant(
+            prompt_text=prompt_base_text,
+            language=language_name,
+            response_text=response_text,
+            llm_service=llm_svc,
+            model_info=model_info,
+            log_service=self._log,
+            context_ref={"run_id": run_id, "prompt_id": prompt_id, "token_result_id": token_result_id},
+        )
+
+        if result["is_correct"] and result["canonical_form"]:
+            variant = result["canonical_form"].strip()
+            inserted = em.insert_magi_answer_variant(
+                prompt_id=prompt_id,
+                language_id=None,  # cross-language: this form is correct regardless of language
+                variant=variant,
+                judge_name="balthasar",
+                judge_model=model_info.get("name", ""),
+            )
+            em.update_answer_correct_by_row(token_result_id)
+            if inserted:
+                logger.info(
+                    "MAGI discovery: new variant '%s' for prompt=%d (run=%d row=%d)",
+                    variant, prompt_id, run_id, token_result_id,
+                )
+            else:
+                logger.debug(
+                    "MAGI discovery: variant '%s' already known for prompt=%d",
+                    variant, prompt_id,
+                )
+        else:
+            logger.info(
+                "MAGI discovery: response confirmed incorrect for prompt=%d row=%d",
+                prompt_id, token_result_id,
+            )
+
+    def _exec_magi_ne_labeling(self, payload: dict) -> None:
+        """Ask one MAGI judge to label named-entity expectations for (prompt, language)."""
+        from app.services.magi_service import MAGIService
+        from app.services.llm_service import LLMService
+
+        run_id       = int(payload["run_id"])
+        prompt_id    = int(payload["prompt_id"])
+        language_id  = int(payload["language_id"])
+        language_name = payload.get("language_name", "")
+        base_text    = payload.get("base_text", "")
+
+        settings = SettingsModel(self._db, crypto=self._crypto).get_all()
+        em       = ExperimentModel(self._db)
+
+        # Skip if already labeled
+        if em.get_ne_labeling_status(prompt_id, language_id) == "done":
+            return
+
+        em.set_ne_labeling_status(prompt_id, language_id, "pending")
+
+        judge_id = settings.get("magi_judge_balthasar_id")
+        if not judge_id:
+            logger.warning("MAGI NE labeling: Balthasar not configured — skipping")
+            em.set_ne_labeling_status(prompt_id, language_id, "failed")
+            return
+        model_info = em.get_model_by_id(int(judge_id))
+        if not model_info:
+            em.set_ne_labeling_status(prompt_id, language_id, "failed")
+            return
+
+        llm_svc  = LLMService(settings, log_service=self._log)
+        magi_svc = MAGIService()
+
+        expectations = magi_svc.label_named_entities(
+            prompt_text=base_text,
+            language=language_name,
+            llm_service=llm_svc,
+            model_info=model_info,
+            log_service=self._log,
+            context_ref={"run_id": run_id, "prompt_id": prompt_id, "language_id": language_id},
+        )
+
+        em.insert_ne_expectations(
+            prompt_id=prompt_id,
+            language_id=language_id,
+            expectations=expectations,
+            judge_name="balthasar",
+            judge_model=model_info.get("name", ""),
+        )
+        em.set_ne_labeling_status(prompt_id, language_id, "done")
+        logger.info(
+            "MAGI NE labeling: %d entities for prompt=%d lang=%s (run=%d)",
+            len(expectations), prompt_id, language_name, run_id,
+        )
+
     def _exec_compute_pei(self, payload: dict) -> None:
         run_id    = int(payload["run_id"])
         prompt_id = int(payload["prompt_id"])
+        qm        = QueueModel(self._db)
+        if qm.has_pending_running_of_type(run_id, "llm_call"):
+            raise _DependencyNotReady("llm_call items still active")
         em        = ExperimentModel(self._db)
 
         inputs = em.get_run_snapshot_inputs(run_id, prompt_id)
@@ -513,4 +727,7 @@ class QueueService:
 
     def _exec_finalize_pei_groups(self, payload: dict) -> None:
         run_id = int(payload["run_id"])
+        qm = QueueModel(self._db)
+        if qm.has_pending_running_of_type(run_id, "compute_pei"):
+            raise _DependencyNotReady("compute_pei items still active")
         ExperimentModel(self._db).update_pei_group_baselines(run_id)

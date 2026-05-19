@@ -81,6 +81,22 @@ class PromptModel:
         finally:
             conn.close()
 
+    def migrate_delimiters(self, old_open: str, old_close: str, new_open: str, new_close: str) -> int:
+        """Replace delimiter pairs in all prompts. Returns number of rows updated."""
+        conn = self.db.get_connection()
+        try:
+            cur = conn.execute(
+                """UPDATE prompts
+                   SET base_text = REPLACE(REPLACE(base_text, ?, ?), ?, ?)
+                   WHERE base_text LIKE ? OR base_text LIKE ?""",
+                (old_open, new_open, old_close, new_close,
+                 f"%{old_open}%", f"%{old_close}%"),
+            )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
     def get_translation_count(self, prompt_id: int) -> int:
         conn = self.db.get_connection()
         try:

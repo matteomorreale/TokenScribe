@@ -50,6 +50,7 @@
             <div style="display:flex; gap:.4rem;">
               <a href="{{ url_for('experiment.detail_experiment', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">View</a>
               <a href="{{ url_for('experiment.pei_results', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm">PEI</a>
+              <a href="{{ url_for('experiment.duplicate_experiment', run_id=r.id) }}" class="ts-btn ts-btn-secondary ts-btn-sm" title="Duplicate run — pre-fills model selection and parameters">Duplicate</a>
               <a href="{{ url_for('report.export_csv') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">CSV</a>
               <a href="{{ url_for('report.export_json') }}?run_id={{ r.id }}" class="ts-btn ts-btn-secondary ts-btn-sm">JSON</a>
               <form method="post" action="{{ url_for('experiment.delete_experiment', run_id=r.id) }}"

@@ -81,15 +81,16 @@ class QueueModel:
             if not row:
                 return None
             item_id = row["id"]
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE run_queue SET status = ?, started_at = ? WHERE id = ? AND status = ?",
                 (ITEM_RUNNING, now, item_id, ITEM_PENDING),
             )
             conn.commit()
-            # Rilegge per avere certezza che sia stato il nostro UPDATE ad avere effetto
+            if cur.rowcount == 0:
+                return None  # Another worker claimed this item first
             updated = conn.execute("SELECT * FROM run_queue WHERE id = ?", (item_id,)).fetchone()
-            if not updated or updated["status"] != ITEM_RUNNING:
-                return None  # qualcun altro lo ha preso (race window improbabile con SQLite WAL)
+            if not updated:
+                return None
             d = dict(updated)
             d["payload"] = json.loads(d["payload"] or "{}")
             return d
@@ -166,6 +167,39 @@ class QueueModel:
                        retry_count = retry_count + 1
                    WHERE id = ?""",
                 (ITEM_TIMEOUT, _now_iso(), "timeout", item_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def has_pending_running_of_type(self, run_id: int, operation_type: str) -> bool:
+        """Return True if any item of the given op_type for this run is still pending or running."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                """SELECT COUNT(*) FROM run_queue
+                   WHERE run_id=? AND operation_type=? AND status IN (?,?)""",
+                (run_id, operation_type, ITEM_PENDING, ITEM_RUNNING),
+            ).fetchone()
+            return bool(row and row[0] > 0)
+        finally:
+            conn.close()
+
+    def requeue_for_dependency(self, item_id: int) -> None:
+        """Move an item to the end of the queue (same priority) without incrementing retry_count.
+        Used when a worker detects that its prerequisites are not yet finished."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute("SELECT * FROM run_queue WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                return
+            conn.execute("DELETE FROM run_queue WHERE id=?", (item_id,))
+            conn.execute(
+                """INSERT INTO run_queue
+                   (run_id, operation_type, item_key, payload, status, priority, retry_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (row["run_id"], row["operation_type"], row["item_key"],
+                 row["payload"], ITEM_PENDING, row["priority"], row["retry_count"]),
             )
             conn.commit()
         finally:

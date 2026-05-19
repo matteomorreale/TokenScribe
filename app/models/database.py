@@ -24,7 +24,7 @@ class DatabaseManager:
 
     def get_connection(self) -> sqlite3.Connection:
         """Return a new SQLite connection with row_factory set."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
@@ -251,6 +251,41 @@ class DatabaseManager:
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_tr_uniq_rplm_rep_att
                    ON token_results(run_id, prompt_id, language_id, model_id, repetition_index, attempt_index)"""
             )
+        except sqlite3.Error:
+            pass
+
+        # Add reasoning_override_requested to token_results ('on', 'off', or NULL)
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "reasoning_override_requested" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN reasoning_override_requested TEXT"
+                )
+        except sqlite3.Error:
+            pass
+
+        # Correctness evaluation metrics (answer_correct, in_target_language, language_leakage)
+        # OLF (Output Language Fidelity) and NEPR (Named Entity Preservation Rate)
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            for col in ("answer_correct", "answer_in_target_language", "language_leakage"):
+                if col not in columns:
+                    conn.execute(f"ALTER TABLE token_results ADD COLUMN {col} INTEGER")
+            for col in ("olf_score", "nepr_score"):
+                if col not in columns:
+                    conn.execute(f"ALTER TABLE token_results ADD COLUMN {col} REAL")
+        except sqlite3.Error:
+            pass
+
+        # Response timing metrics (ms): total wall time, time-to-first-token, generation time
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            for col in ("total_query_time_ms", "time_to_first_token_ms", "time_to_completion_ms"):
+                if col not in columns:
+                    conn.execute(f"ALTER TABLE token_results ADD COLUMN {col} INTEGER")
         except sqlite3.Error:
             pass
 
@@ -542,6 +577,42 @@ class DatabaseManager:
 
             -- models
             CREATE INDEX IF NOT EXISTS idx_models_provider_id ON models(provider_id);
+
+            -- magi_answer_variants: dynamic answer variants discovered by MAGI judges
+            CREATE TABLE IF NOT EXISTS magi_answer_variants (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_id    INTEGER NOT NULL REFERENCES prompts(id),
+                language_id  INTEGER REFERENCES languages(id),  -- NULL = valid in any language
+                variant      TEXT NOT NULL,
+                judge_name   TEXT,
+                judge_model  TEXT,
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_mav_prompt ON magi_answer_variants(prompt_id);
+
+            -- ne_expectations: named-entity forms expected per (prompt, language), labeled by MAGI
+            CREATE TABLE IF NOT EXISTS ne_expectations (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_id      INTEGER NOT NULL REFERENCES prompts(id),
+                language_id    INTEGER NOT NULL REFERENCES languages(id),
+                entity_name    TEXT NOT NULL,
+                expected_form  TEXT NOT NULL,
+                allow_original INTEGER NOT NULL DEFAULT 0,
+                judge_name     TEXT,
+                judge_model    TEXT,
+                computed_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                UNIQUE(prompt_id, language_id, entity_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ne_prompt_lang ON ne_expectations(prompt_id, language_id);
+
+            -- ne_labeling_status: tracks completion of MAGI NE labeling per (prompt, language)
+            CREATE TABLE IF NOT EXISTS ne_labeling_status (
+                prompt_id    INTEGER NOT NULL REFERENCES prompts(id),
+                language_id  INTEGER NOT NULL REFERENCES languages(id),
+                status       TEXT NOT NULL DEFAULT 'pending',
+                computed_at  TEXT,
+                PRIMARY KEY (prompt_id, language_id)
+            );
         """)
 
     def _seed_writing_systems(self, conn: sqlite3.Connection):

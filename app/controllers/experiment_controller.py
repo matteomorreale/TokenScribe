@@ -249,7 +249,52 @@ def new_experiment(study_id: int):
         )
 
     # ------------------------------------------------------------------
-    # 3. LLM calls (priority 2) — repetitions_per_cell items per prompt × model × language
+    # 3. MAGI NE labeling (priority 1) — one job per (prompt, language)
+    #    for prompts that have expected-answer definitions.
+    # ------------------------------------------------------------------
+    from app.services.correctness_service import EXPECTED_ANSWERS as _EXPECTED_ANSWERS
+    ne_label_count = 0
+    for prompt in prompts:
+        if prompt["id"] not in _EXPECTED_ANSWERS:
+            continue
+        approved_for_ne = _tm().get_approved_by_prompt(prompt["id"])
+        ne_lang_ids: dict[int, dict] = {
+            english_language_id: {
+                "language_id":   english_language_id,
+                "language_name": english.get("name") or "English",
+            }
+        }
+        for t in approved_for_ne:
+            lid = int(t["language_id"])
+            if lid != english_language_id:
+                ne_lang_ids[lid] = {
+                    "language_id":   lid,
+                    "language_name": t.get("language_name") or "",
+                }
+        for lang_info in ne_lang_ids.values():
+            # Skip if already labeled in a previous run
+            if em.get_ne_labeling_status(prompt["id"], lang_info["language_id"]) == "done":
+                continue
+            qm.enqueue(
+                run_id=run_id,
+                operation_type="magi_ne_labeling",
+                item_key=f"ne_label:p{prompt['id']}:l{lang_info['language_id']}",
+                payload={
+                    "run_id":        run_id,
+                    "prompt_id":     prompt["id"],
+                    "language_id":   lang_info["language_id"],
+                    "language_name": lang_info["language_name"],
+                    "base_text":     prompt["base_text"],
+                },
+                priority=1,
+            )
+            ne_label_count += 1
+
+    if ne_label_count > 0:
+        flash(f"{ne_label_count} operazioni MAGI NE labeling accodate.", "info")
+
+    # ------------------------------------------------------------------
+    # 4. LLM calls (priority 2) — repetitions_per_cell items per prompt × model × language
     # ------------------------------------------------------------------
     llm_item_count = 0
     for prompt in prompts:
@@ -332,12 +377,59 @@ def new_experiment(study_id: int):
         priority=4,
     )
 
-    total_items = 1 + magi_queued_count + llm_item_count + len(prompts) + 1
+    total_items = 1 + magi_queued_count + ne_label_count + llm_item_count + len(prompts) + 1
     flash(
         f"Experiment run #{run_id} avviata — {total_items} operazioni in coda.",
         "success",
     )
     return redirect(url_for("experiment.detail_experiment", run_id=run_id))
+
+
+@experiment_bp.route("/experiments/<int:run_id>/duplicate")
+def duplicate_experiment(run_id: int):
+    em = _em()
+    source_run = em.get_run_by_id(run_id)
+    if not source_run:
+        flash("Run not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    study_id = source_run["study_id"]
+    study = _sm().get_by_id(study_id)
+    if not study:
+        flash("Study not found.", "error")
+        return redirect(url_for("experiment.list_experiments"))
+
+    models = em.get_all_models()
+    prompts = _pm().get_by_study(study_id)
+    prompt_ids = [p["id"] for p in prompts]
+    readiness = _ssm().get_readiness_by_prompts(prompt_ids) if prompt_ids else {}
+
+    settings_get = _stm().get_all()
+    configured_providers = {
+        p for p, k in _PROVIDER_KEY_MAP.items() if settings_get.get(k)
+    }
+    judge_ids = _stm().get_magi_judge_ids()
+    judge_info = [
+        em.get_model_by_id(int(jid)) if jid else None
+        for jid in judge_ids
+    ]
+    judge_model_ids = {jid for jid in judge_ids if jid}
+
+    preselected_model_ids = em.get_run_model_ids(run_id)
+    prefilled_repetitions = _qm().get_run_repetitions(run_id)
+    prefilled_notes = source_run.get("notes") or ""
+
+    return render_template(
+        "experiments/new.html",
+        study=study, models=models, prompts=prompts, readiness=readiness,
+        configured_providers=configured_providers,
+        judge_info=judge_info,
+        judge_model_ids=judge_model_ids,
+        source_run_id=run_id,
+        preselected_model_ids=preselected_model_ids,
+        prefilled_repetitions=prefilled_repetitions,
+        prefilled_notes=prefilled_notes,
+    )
 
 
 @experiment_bp.route("/experiments/<int:run_id>")

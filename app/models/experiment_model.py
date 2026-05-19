@@ -172,6 +172,10 @@ class ExperimentModel:
         response_valid: bool = None,
         repetition_index: int = 0,
         attempt_status: str = "success",
+        reasoning_override_requested: str = None,
+        total_query_time_ms: int = None,
+        time_to_first_token_ms: int = None,
+        time_to_completion_ms: int = None,
     ) -> int:
         """Insert a token result row. attempt_index is computed atomically via a
         MAX+1 subquery so that concurrent retries never collide on the unique key."""
@@ -196,7 +200,9 @@ class ExperimentModel:
                     visible_output_text_length, api_reported_output_tokens,
                     cost, source, token_accounting_mode, response_text,
                     normalized_output_tokens, visible_output_tokens, response_valid,
-                    repetition_index, attempt_index, attempt_status)
+                    repetition_index, attempt_index, attempt_status,
+                    reasoning_override_requested,
+                    total_query_time_ms, time_to_first_token_ms, time_to_completion_ms)
                    SELECT ?, ?, ?, ?,
                           ?, ?,
                           ?, ?,
@@ -207,7 +213,9 @@ class ExperimentModel:
                                     FROM token_results t2
                                     WHERE t2.run_id=? AND t2.prompt_id=? AND t2.language_id=?
                                       AND t2.model_id=? AND t2.repetition_index=?), 0),
-                          ?""",
+                          ?,
+                          ?,
+                          ?, ?, ?""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
@@ -215,10 +223,198 @@ class ExperimentModel:
                  vot, vot, rv,
                  repetition_index,
                  run_id, prompt_id, language_id, model_id, repetition_index,
-                 attempt_status),
+                 attempt_status,
+                 reasoning_override_requested,
+                 total_query_time_ms, time_to_first_token_ms, time_to_completion_ms),
             )
             conn.commit()
             return cur.lastrowid
+        finally:
+            conn.close()
+
+    def update_correctness_metrics(self, token_result_id: int, metrics: dict) -> None:
+        """Stamp answer_correct / answer_in_target_language / language_leakage on a row."""
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """UPDATE token_results
+                   SET answer_correct = ?,
+                       answer_in_target_language = ?,
+                       language_leakage = ?
+                   WHERE id = ?""",
+                (
+                    1 if metrics["correct"] else 0,
+                    1 if metrics["in_target_language"] else 0,
+                    1 if metrics["language_leakage"] else 0,
+                    token_result_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_olf_score(self, token_result_id: int, score: float) -> None:
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE token_results SET olf_score=? WHERE id=?",
+                (score, token_result_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_nepr_score(self, token_result_id: int, score: float) -> None:
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE token_results SET nepr_score=? WHERE id=?",
+                (score, token_result_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --- Prompt access (needed by queue workers) ---
+
+    def get_prompt_base_text(self, prompt_id: int) -> str | None:
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT base_text FROM prompts WHERE id=?", (prompt_id,)
+            ).fetchone()
+            return row["base_text"] if row else None
+        finally:
+            conn.close()
+
+    # --- MAGI answer variants ---
+
+    def get_magi_answer_variants(self, prompt_id: int, language_id: int | None) -> list[str]:
+        """Return variant strings for this prompt scoped to language_id (or cross-language if None)."""
+        conn = self.db.get_connection()
+        try:
+            if language_id is None:
+                rows = conn.execute(
+                    "SELECT variant FROM magi_answer_variants WHERE prompt_id=? AND language_id IS NULL",
+                    (prompt_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT variant FROM magi_answer_variants WHERE prompt_id=? AND language_id=?",
+                    (prompt_id, language_id),
+                ).fetchall()
+            return [r["variant"] for r in rows]
+        finally:
+            conn.close()
+
+    def insert_magi_answer_variant(
+        self,
+        prompt_id: int,
+        language_id: int | None,
+        variant: str,
+        judge_name: str = "",
+        judge_model: str = "",
+    ) -> bool:
+        """Insert a MAGI-discovered variant. Returns True if newly inserted, False if duplicate."""
+        conn = self.db.get_connection()
+        try:
+            existing = conn.execute(
+                """SELECT id FROM magi_answer_variants
+                   WHERE prompt_id=?
+                     AND (language_id IS ? OR language_id=?)
+                     AND LOWER(variant)=LOWER(?)""",
+                (prompt_id, language_id, language_id, variant),
+            ).fetchone()
+            if existing:
+                return False
+            conn.execute(
+                """INSERT INTO magi_answer_variants
+                   (prompt_id, language_id, variant, judge_name, judge_model)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (prompt_id, language_id, variant, judge_name, judge_model),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    def update_answer_correct_by_row(self, token_result_id: int) -> None:
+        """Retroactively mark a specific token_result row as answer_correct=1."""
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE token_results SET answer_correct=1, language_leakage=0 WHERE id=?",
+                (token_result_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --- Named entity expectations ---
+
+    def get_ne_expectations(self, prompt_id: int, language_id: int) -> list[dict]:
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT entity_name, expected_form, allow_original
+                   FROM ne_expectations
+                   WHERE prompt_id=? AND language_id=?""",
+                (prompt_id, language_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_ne_labeling_status(self, prompt_id: int, language_id: int) -> str | None:
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT status FROM ne_labeling_status WHERE prompt_id=? AND language_id=?",
+                (prompt_id, language_id),
+            ).fetchone()
+            return row["status"] if row else None
+        finally:
+            conn.close()
+
+    def set_ne_labeling_status(self, prompt_id: int, language_id: int, status: str) -> None:
+        import datetime
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """INSERT INTO ne_labeling_status (prompt_id, language_id, status, computed_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(prompt_id, language_id) DO UPDATE SET status=excluded.status, computed_at=excluded.computed_at""",
+                (prompt_id, language_id, status,
+                 datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def insert_ne_expectations(
+        self,
+        prompt_id: int,
+        language_id: int,
+        expectations: list[dict],
+        judge_name: str = "",
+        judge_model: str = "",
+    ) -> None:
+        if not expectations:
+            return
+        conn = self.db.get_connection()
+        try:
+            conn.executemany(
+                """INSERT OR REPLACE INTO ne_expectations
+                   (prompt_id, language_id, entity_name, expected_form, allow_original, judge_name, judge_model)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (prompt_id, language_id,
+                     e["entity"], e["expected_form"], 1 if e.get("allow_original") else 0,
+                     judge_name, judge_model)
+                    for e in expectations
+                ],
+            )
+            conn.commit()
         finally:
             conn.close()
 
@@ -255,6 +451,7 @@ class ExperimentModel:
                           tr.response_text,
                           COALESCE(tr.visible_output_tokens, tr.normalized_output_tokens) AS visible_output_tokens,
                           COALESCE(tr.response_valid, CASE WHEN COALESCE(tr.response_text, '') = '' THEN 0 ELSE 1 END) AS response_valid,
+                          tr.reasoning_override_requested,
                           tr.created_at,
                           p.base_text, p.category, p.notes as prompt_notes,
                           l.name as language_name, l.code as language_code,

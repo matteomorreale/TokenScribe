@@ -4,10 +4,15 @@ Author: Matteo Morreale
 
 Unified interface to all supported LLM providers.
 Providers: OpenAI, Anthropic, Google Gemini, DeepSeek, Meta Llama, Qwen, Mistral, xAI (Grok)
-All calls return a TokenScribeCallResult with token counts and cost.
+All calls return a TokenScribeCallResult with token counts, cost, and timing metrics.
 
 Optional LogService injection: pass log_service= to __init__ to enable non-blocking
 operation logging. Each call records provider, model, tokens, cost, duration, response.
+
+Timing fields in TokenScribeCallResult:
+  total_query_time_ms      — wall time from dispatch to result (always set)
+  time_to_first_token_ms   — latency until first streamed token chunk (streaming providers only)
+  time_to_completion_ms    — time from first token to last token (streaming providers only)
 """
 
 import time
@@ -93,6 +98,11 @@ class TokenScribeCallResult:
     model_not_found: bool = False
     rate_limited: bool = False
     timed_out: bool = False
+    # Timing (milliseconds). total_query_time_ms is always set; TTFT and
+    # time_to_completion are set only for streaming-capable providers.
+    total_query_time_ms: Optional[int] = None
+    time_to_first_token_ms: Optional[int] = None
+    time_to_completion_ms: Optional[int] = None
 
 
 class LLMService:
@@ -158,6 +168,8 @@ class LLMService:
             result = handler(model_name, prompt_text)
         duration_ms = int((time.monotonic() - t0) * 1000)
 
+        result.total_query_time_ms = duration_ms
+
         if result.success:
             result.cost = (
                 result.input_tokens * cost_per_input / 1_000_000
@@ -197,6 +209,9 @@ class LLMService:
                 "source": result.source,
                 "response_preview": (result.response_text or "")[:1000],
                 "response_length": len(result.response_text or ""),
+                "total_query_time_ms": result.total_query_time_ms,
+                "time_to_first_token_ms": result.time_to_first_token_ms,
+                "time_to_completion_ms": result.time_to_completion_ms,
             },
             duration_ms=duration_ms,
         )
@@ -221,6 +236,46 @@ class LLMService:
         )
 
     # ------------------------------------------------------------------
+    # Streaming helper (OpenAI-compatible APIs)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _do_openai_stream(client, call_kwargs: dict):
+        """Run a streaming OpenAI-compatible completion.
+
+        Returns (content, usage, t_req, t_first_chunk, t_done).
+        t_first_chunk is None if the model produced no content tokens.
+        Raises on any error so the caller can fall back to non-streaming.
+        """
+        stream_kwargs = dict(call_kwargs, stream=True, stream_options={"include_usage": True})
+        t_req = time.monotonic()
+        t_first = None
+        text_parts = []
+        usage = None
+
+        with client.chat.completions.create(**stream_kwargs) as stream:
+            for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    usage = chunk.usage
+                if chunk.choices and chunk.choices[0].delta.content:
+                    if t_first is None:
+                        t_first = time.monotonic()
+                    text_parts.append(chunk.choices[0].delta.content)
+
+        t_done = time.monotonic()
+        return "".join(text_parts), usage, t_req, t_first, t_done
+
+    @staticmethod
+    def _timing_from_stream(t_req, t_first, t_done):
+        """Compute (ttft_ms, completion_ms) from raw timestamps."""
+        if t_first is None:
+            return None, None
+        return (
+            int((t_first - t_req) * 1000),
+            int((t_done - t_first) * 1000),
+        )
+
+    # ------------------------------------------------------------------
     # OpenAI
     # ------------------------------------------------------------------
 
@@ -232,9 +287,6 @@ class LLMService:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
 
-            # Reasoning models consume an internal reasoning budget before producing
-            # visible output. Use 8192 for them so content has room to breathe after
-            # the reasoning phase; non-reasoning models get the standard cap.
             max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
 
             call_kwargs: dict = dict(
@@ -245,17 +297,35 @@ class LLMService:
             if _openai_supports_reasoning_effort(model_name):
                 call_kwargs["reasoning_effort"] = "high" if is_reasoning else _openai_low_effort(model_name)
 
-            response = client.chat.completions.create(**call_kwargs)
-            usage = response.usage
-            content = response.choices[0].message.content or "" if response.choices else ""
+            ttft_ms = None
+            completion_ms = None
 
-            # If the budget was exhausted and content is still empty the model spent
-            # everything on internal reasoning.  Retry once with a higher cap.
-            if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
-                retry_kwargs = dict(call_kwargs, max_completion_tokens=8192)
-                response = client.chat.completions.create(**retry_kwargs)
+            try:
+                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+
+                # If budget was exhausted and content is still empty, retry with higher cap.
+                if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
+                    retry_kwargs = dict(call_kwargs, max_completion_tokens=8192)
+                    try:
+                        content, usage, t_req, t_first, t_done = self._do_openai_stream(client, retry_kwargs)
+                    except Exception:
+                        response = client.chat.completions.create(**retry_kwargs)
+                        usage = response.usage
+                        content = response.choices[0].message.content or "" if response.choices else ""
+                        t_first = None
+
+                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+            except Exception:
+                # Streaming not supported or failed; fall back to non-streaming.
+                response = client.chat.completions.create(**call_kwargs)
                 usage = response.usage
                 content = response.choices[0].message.content or "" if response.choices else ""
+
+                if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
+                    retry_kwargs = dict(call_kwargs, max_completion_tokens=8192)
+                    response = client.chat.completions.create(**retry_kwargs)
+                    usage = response.usage
+                    content = response.choices[0].message.content or "" if response.choices else ""
 
             reasoning_toks = 0
             if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
@@ -266,6 +336,8 @@ class LLMService:
                 reasoning_tokens=reasoning_toks,
                 response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
             )
         except Exception as e:
             err = str(e)
@@ -311,16 +383,32 @@ class LLMService:
         try:
             import anthropic
             client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
+
+            t_req = time.monotonic()
+            t_first = None
+            text_parts = []
+
+            with client.messages.stream(
                 model=model_name,
                 max_tokens=MAX_OUTPUT_TOKENS,
                 messages=[{"role": "user", "content": prompt_text}],
-            )
+            ) as stream:
+                for text_chunk in stream.text_stream:
+                    if t_first is None:
+                        t_first = time.monotonic()
+                    text_parts.append(text_chunk)
+                final_msg = stream.get_final_message()
+
+            t_done = time.monotonic()
+            ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+
             return TokenScribeCallResult(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                response_text=response.content[0].text if response.content else "",
+                input_tokens=final_msg.usage.input_tokens,
+                output_tokens=final_msg.usage.output_tokens,
+                response_text="".join(text_parts),
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
             )
         except Exception as e:
             err = str(e)
@@ -382,27 +470,45 @@ class LLMService:
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1",
             )
-            # Reasoning models consume reasoning tokens from the shared budget; use 8192
-            # so visible output has room after the internal thinking phase.
             max_tokens = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
-            response = client.chat.completions.create(
+            call_kwargs = dict(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=max_tokens,
             )
-            usage = response.usage
-            content = response.choices[0].message.content or "" if response.choices else ""
 
-            # If we hit the cap with no visible content the model spent everything on
-            # internal reasoning; retry once with a higher budget.
-            if not content and usage and usage.completion_tokens >= max_tokens and max_tokens < 8192:
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=[{"role": "user", "content": prompt_text}],
-                    max_tokens=8192,
-                )
+            ttft_ms = None
+            completion_ms = None
+            content = None
+            usage = None
+
+            try:
+                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+
+                if not content and usage and usage.completion_tokens >= max_tokens and max_tokens < 8192:
+                    retry_kwargs = dict(call_kwargs, max_tokens=8192)
+                    try:
+                        content, usage, t_req, t_first, t_done = self._do_openai_stream(client, retry_kwargs)
+                    except Exception:
+                        response = client.chat.completions.create(**retry_kwargs)
+                        usage = response.usage
+                        content = response.choices[0].message.content or "" if response.choices else ""
+                        t_first = None
+
+                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+            except Exception:
+                response = client.chat.completions.create(**call_kwargs)
                 usage = response.usage
                 content = response.choices[0].message.content or "" if response.choices else ""
+
+                if not content and usage and usage.completion_tokens >= max_tokens and max_tokens < 8192:
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt_text}],
+                        max_tokens=8192,
+                    )
+                    usage = response.usage
+                    content = response.choices[0].message.content or "" if response.choices else ""
 
             reasoning_toks = 0
             if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
@@ -413,6 +519,8 @@ class LLMService:
                 reasoning_tokens=reasoning_toks,
                 response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
             )
         except Exception as e:
             err = str(e)
@@ -432,17 +540,30 @@ class LLMService:
                 api_key=api_key,
                 base_url="https://api.together.xyz/v1",
             )
-            response = client.chat.completions.create(
+            call_kwargs = dict(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=MAX_OUTPUT_TOKENS,
             )
-            usage = response.usage
+
+            ttft_ms = None
+            completion_ms = None
+
+            try:
+                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+            except Exception:
+                response = client.chat.completions.create(**call_kwargs)
+                usage = response.usage
+                content = response.choices[0].message.content or ""
+
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
-                response_text=response.choices[0].message.content or "",
+                response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
             )
         except Exception as e:
             err = str(e)
@@ -468,17 +589,30 @@ class LLMService:
                 api_key=api_key,
                 base_url=base_url,
             )
-            response = client.chat.completions.create(
+            call_kwargs = dict(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=MAX_OUTPUT_TOKENS,
             )
-            usage = response.usage
+
+            ttft_ms = None
+            completion_ms = None
+
+            try:
+                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+            except Exception:
+                response = client.chat.completions.create(**call_kwargs)
+                usage = response.usage
+                content = response.choices[0].message.content or ""
+
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
-                response_text=response.choices[0].message.content or "",
+                response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
             )
         except Exception as e:
             err = str(e)
@@ -526,13 +660,22 @@ class LLMService:
                 base_url="https://api.x.ai/v1",
             )
             max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
-            response = client.chat.completions.create(
+            call_kwargs = dict(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=max_tok,
             )
-            usage = response.usage
-            content = response.choices[0].message.content or "" if response.choices else ""
+
+            ttft_ms = None
+            completion_ms = None
+
+            try:
+                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+            except Exception:
+                response = client.chat.completions.create(**call_kwargs)
+                usage = response.usage
+                content = response.choices[0].message.content or "" if response.choices else ""
 
             reasoning_toks = 0
             if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
@@ -543,6 +686,8 @@ class LLMService:
                 reasoning_tokens=reasoning_toks,
                 response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
             )
         except Exception as e:
             err = str(e)

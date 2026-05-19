@@ -283,6 +283,17 @@ def update_notes(prompt_id: int):
     return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
 
 
+@prompt_bp.route("/prompts/migrate-delimiters", methods=["POST"])
+def migrate_delimiters():
+    old_open = request.form.get("old_open", "<<<")
+    old_close = request.form.get("old_close", ">>>")
+    new_open = request.form.get("new_open", "<input>")
+    new_close = request.form.get("new_close", "</input>")
+    count = _pm().migrate_delimiters(old_open, old_close, new_open, new_close)
+    flash(f"Migrazione completata: {count} prompt aggiornati ({old_open}…{old_close} → {new_open}…{new_close}).", "success")
+    return redirect(request.referrer or url_for("study.list_studies"))
+
+
 @prompt_bp.route("/prompts/<int:prompt_id>/delete", methods=["POST"])
 def delete_prompt(prompt_id: int):
     prompt = _pm().get_by_id(prompt_id)

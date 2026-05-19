@@ -214,7 +214,7 @@ def ai_translate(prompt_id: int):
             "Return ONLY valid JSON (no markdown) with keys translation and back_translation.\n"
             f"Target language: {lang['name']} ({lang['code']}).\n"
             "Constraints:\n"
-            "- Preserve line breaks, punctuation, bracketed placeholders, and markers like <<< >>>.\n"
+            "- Preserve line breaks, punctuation, bracketed placeholders, and markers like <input> </input>.\n"
             "- Preserve numbered lists, bullets, and section ordering.\n"
             "- Do not add explanations.\n"
             f"- Aim for an SFS >= {sfs_target:.4f}.\n"

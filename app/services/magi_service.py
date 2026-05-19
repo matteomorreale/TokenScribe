@@ -425,6 +425,156 @@ class MAGIService:
             "magi_offline_reason": None,
         }
 
+    # ------------------------------------------------------------------
+    # Answer discovery (single-judge, triggered on correct=False)
+    # ------------------------------------------------------------------
+
+    _ANSWER_DISCOVERY_PROMPT = """\
+You are a fact-checking assistant for a scientific linguistic experiment.
+
+Prompt given to the model (in {language}):
+{prompt_text}
+
+Model response:
+{response_text}
+
+Task: Determine whether the response contains the correct factual answer to the prompt.
+If it does, extract the minimal canonical surface form of the answer exactly as it appears.
+
+Respond with a SINGLE JSON object — no explanation, no markdown fences:
+{{"is_correct": true or false, "canonical_form": "the answer text" or null}}
+"""
+
+    def discover_answer_variant(
+        self,
+        prompt_text: str,
+        language: str,
+        response_text: str,
+        llm_service,
+        model_info: dict,
+        log_service=None,
+        context_ref: dict | None = None,
+    ) -> dict:
+        """
+        Ask one judge whether *response_text* is a correct answer to *prompt_text*.
+        Returns {"is_correct": bool, "canonical_form": str|None, "judge_model": str}.
+        """
+        prompt = self._ANSWER_DISCOVERY_PROMPT.format(
+            language=language,
+            prompt_text=prompt_text,
+            response_text=response_text,
+        )
+        for attempt in range(1, MAX_RETRIES + 1):
+            result = self._call_once(prompt, model_info, llm_service, attempt)
+            raw = result.get("raw_response") or ""
+            parsed = self._parse_json_bool_response(raw)
+            if parsed is not None:
+                return {
+                    "is_correct":     parsed.get("is_correct", False),
+                    "canonical_form": parsed.get("canonical_form"),
+                    "judge_model":    model_info.get("name", ""),
+                }
+            logger.warning(
+                "[MAGI:discovery] attempt %d/%d failed to parse — raw: %r",
+                attempt, MAX_RETRIES, raw[:200],
+            )
+        return {"is_correct": False, "canonical_form": None, "judge_model": model_info.get("name", "")}
+
+    # ------------------------------------------------------------------
+    # Named-entity labeling (single-judge, run once per prompt×language)
+    # ------------------------------------------------------------------
+
+    _NE_LABELING_PROMPT = """\
+You are annotating named entities for a linguistic experiment on model output fidelity.
+
+Prompt (English original):
+{prompt_text}
+
+Target language: {language}
+
+Task: List every named entity in the prompt: places, proper names, technical terms, acronyms.
+For each entity, provide the standard localized form a native {language} speaker would write.
+
+Respond with a JSON array — no explanation, no markdown fences:
+[{{"entity": "English form", "expected_form": "form in {language}", "allow_original": true or false}}]
+
+- "entity":         the entity as it appears in the English prompt
+- "expected_form":  the expected localized form in {language}
+- "allow_original": true if the English form is also acceptable in {language} responses
+
+If the prompt contains no named entities, respond with an empty array: []
+"""
+
+    def label_named_entities(
+        self,
+        prompt_text: str,
+        language: str,
+        llm_service,
+        model_info: dict,
+        log_service=None,
+        context_ref: dict | None = None,
+    ) -> list[dict]:
+        """
+        Ask one judge to label named-entity expectations for *prompt_text* in *language*.
+        Returns a list of {entity, expected_form, allow_original} dicts (may be empty).
+        """
+        prompt = self._NE_LABELING_PROMPT.format(
+            prompt_text=prompt_text,
+            language=language,
+        )
+        for attempt in range(1, MAX_RETRIES + 1):
+            result = self._call_once(prompt, model_info, llm_service, attempt)
+            raw = result.get("raw_response") or ""
+            parsed = self._parse_json_array_response(raw)
+            if parsed is not None:
+                cleaned = []
+                for item in parsed:
+                    if isinstance(item, dict) and item.get("entity") and item.get("expected_form"):
+                        cleaned.append({
+                            "entity":        str(item["entity"]),
+                            "expected_form": str(item["expected_form"]),
+                            "allow_original": bool(item.get("allow_original", False)),
+                        })
+                return cleaned
+            logger.warning(
+                "[MAGI:ne_labeling] attempt %d/%d failed to parse — raw: %r",
+                attempt, MAX_RETRIES, raw[:200],
+            )
+        return []
+
+    # ------------------------------------------------------------------
+    # JSON parse helpers for structured single-judge outputs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_json_bool_response(text: str) -> dict | None:
+        """Extract {"is_correct": bool, "canonical_form": str|None} from judge output."""
+        m = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+        if not m:
+            return None
+        try:
+            data = _json.loads(m.group())
+            if "is_correct" not in data:
+                return None
+            return {
+                "is_correct":     bool(data["is_correct"]),
+                "canonical_form": data.get("canonical_form") or None,
+            }
+        except (_json.JSONDecodeError, TypeError):
+            return None
+
+    @staticmethod
+    def _parse_json_array_response(text: str) -> list | None:
+        """Extract a JSON array from judge output."""
+        m = re.search(r'\[.*?\]', text, re.DOTALL)
+        if not m:
+            return None
+        try:
+            data = _json.loads(m.group())
+            return data if isinstance(data, list) else None
+        except (_json.JSONDecodeError, TypeError):
+            return None
+
     @staticmethod
     def _parse_verdict(text: str) -> dict:
         """

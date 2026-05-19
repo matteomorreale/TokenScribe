@@ -67,6 +67,7 @@ class ExportService:
             "is_reasoning_capable",
             "reasoning_observed",
             "reasoning_state",
+            "reasoning_override_requested",
             "cost_visible_only",
             "cost_reasoning",
             "cost",

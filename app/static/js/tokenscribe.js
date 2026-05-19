@@ -104,7 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
     insertBtn.addEventListener("click", () => {
       const ta = document.getElementById("base_text");
       if (ta) {
-        ta.value = "[Instruction]\n<<<\n[Input]\n>>>\n[Expected Output]";
+        ta.value = "[Instruction]\n<input>\n[Input]\n</input>\n[Expected Output]";
         ta.focus();
       }
     });
