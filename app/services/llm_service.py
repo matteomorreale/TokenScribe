@@ -20,10 +20,11 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-# Max concurrent in-flight Anthropic API calls across all worker threads.
-# Anthropic enforces a 50 req/min org-wide limit; keeping this at 3 avoids
-# hitting it when 20 queue workers all call Claude simultaneously.
-_ANTHROPIC_SEMAPHORE = threading.Semaphore(3)
+# Serialise all Anthropic API calls to 1 at a time.
+# This org tier hits both the concurrent-connection limit and the 50 req/min
+# cap if multiple workers call Claude simultaneously; a single slot eliminates
+# both without affecting non-Anthropic providers.
+_ANTHROPIC_SEMAPHORE = threading.Semaphore(1)
 
 # Uniform output-token cap applied to all providers.  Individual provider APIs may
 # enforce a lower internal limit, but we always request 4096 so the ceiling is

@@ -78,8 +78,12 @@ def export_json():
     pei = em.get_pei_by_run(run_id)
     pei_groups = em.get_pei_groups_by_run(run_id)
     translation_scores = em.get_translation_scores_by_run(run_id)
+    cell_completeness = em.get_cell_completeness(run_id)
     run_notes = (run or {}).get("notes") or ""
-    json_data = ExportService.to_json(results, pei, pei_groups, translation_scores, run_notes=run_notes)
+    json_data = ExportService.to_json(
+        results, pei, pei_groups, translation_scores,
+        run_notes=run_notes, cell_completeness=cell_completeness,
+    )
     return Response(
         json_data,
         mimetype="application/json",

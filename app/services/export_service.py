@@ -127,8 +127,32 @@ class ExportService:
         pei_group_results: List[dict] = None,
         translation_scores: List[dict] = None,
         run_notes: str = None,
+        cell_completeness: dict = None,
     ) -> str:
         """Convert results to a structured JSON dataset."""
+        cc = cell_completeness or {}
+        expected_reps = cc.get("expected_reps", 1)
+        cells = cc.get("cells", {})
+        incomplete = cc.get("incomplete", [])
+
+        completeness_block = {
+            "expected_reps": expected_reps,
+            "all_complete": len(incomplete) == 0,
+            "incomplete_cells": [
+                {"prompt_id": p, "language_id": l, "model_id": m, "actual_reps": a}
+                for p, l, m, a in incomplete
+            ],
+        }
+
+        enriched_results = []
+        for row in results:
+            key = (row.get("prompt_id"), row.get("language_id"), row.get("model_id"))
+            actual = cells.get(key, expected_reps)
+            enriched = dict(row)
+            enriched["cell_expected_reps"] = expected_reps
+            enriched["cell_actual_reps"] = actual
+            enriched_results.append(enriched)
+
         dataset = {
             "_notes": {
                 "pei": (
@@ -136,10 +160,16 @@ class ExportService:
                     "translation candidate texts (CV of char_length, word_count, token_count across languages). "
                     "Identical PEI values across runs using different LLMs is expected and correct — "
                     "PEI changes only when the set of approved translations changes."
-                )
+                ),
+                "cell_completeness": (
+                    "cell_expected_reps / cell_actual_reps on each token_result row indicate "
+                    "how many successful repetitions the cell (prompt × language × model) has. "
+                    "Cells with actual_reps < expected_reps are also listed in cell_completeness.incomplete_cells."
+                ),
             },
             "run_notes": run_notes or "",
-            "token_results": results,
+            "cell_completeness": completeness_block,
+            "token_results": enriched_results,
             "pei_results": pei_results or [],
             "pei_group_results": pei_group_results or [],
             "translation_scores": translation_scores or [],

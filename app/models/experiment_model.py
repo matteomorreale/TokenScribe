@@ -564,6 +564,47 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def get_cell_completeness(self, run_id: int) -> dict:
+        """Return per-cell repetition completeness for a run.
+
+        Returns:
+            {
+              "expected_reps": int,
+              "cells": {(prompt_id, language_id, model_id): actual_reps},
+              "incomplete": [(prompt_id, language_id, model_id, actual_reps), ...],
+            }
+        expected_reps = MAX(repetition_index) + 1 across all successful rows in the run.
+        """
+        conn = self.db.get_connection()
+        try:
+            exp_row = conn.execute(
+                """SELECT COALESCE(MAX(repetition_index) + 1, 1) AS expected_reps
+                   FROM token_results
+                   WHERE run_id = ? AND attempt_status = 'success'""",
+                (run_id,),
+            ).fetchone()
+            expected = exp_row["expected_reps"] if exp_row else 1
+
+            rows = conn.execute(
+                """SELECT prompt_id, language_id, model_id,
+                          COUNT(DISTINCT repetition_index) AS actual_reps
+                   FROM token_results
+                   WHERE run_id = ? AND attempt_status = 'success'
+                   GROUP BY prompt_id, language_id, model_id""",
+                (run_id,),
+            ).fetchall()
+
+            cells = {
+                (r["prompt_id"], r["language_id"], r["model_id"]): r["actual_reps"]
+                for r in rows
+            }
+            incomplete = [
+                (p, l, m, a) for (p, l, m), a in cells.items() if a < expected
+            ]
+            return {"expected_reps": expected, "cells": cells, "incomplete": incomplete}
+        finally:
+            conn.close()
+
     def get_pei_by_run(self, run_id: int):
         conn = self.db.get_connection()
         try:
