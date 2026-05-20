@@ -15,9 +15,15 @@ Timing fields in TokenScribeCallResult:
   time_to_completion_ms    — time from first token to last token (streaming providers only)
 """
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
+
+# Max concurrent in-flight Anthropic API calls across all worker threads.
+# Anthropic enforces a 50 req/min org-wide limit; keeping this at 3 avoids
+# hitting it when 20 queue workers all call Claude simultaneously.
+_ANTHROPIC_SEMAPHORE = threading.Semaphore(3)
 
 # Uniform output-token cap applied to all providers.  Individual provider APIs may
 # enforce a lower internal limit, but we always request 4096 so the ceiling is
@@ -380,39 +386,40 @@ class LLMService:
         api_key = self.settings.get("anthropic_api_key", "")
         if not api_key:
             return TokenScribeCallResult(success=False, error="Anthropic API key not configured")
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=api_key)
+        with _ANTHROPIC_SEMAPHORE:
+            try:
+                import anthropic
+                client = anthropic.Anthropic(api_key=api_key)
 
-            t_req = time.monotonic()
-            t_first = None
-            text_parts = []
+                t_req = time.monotonic()
+                t_first = None
+                text_parts = []
 
-            with client.messages.stream(
-                model=model_name,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                messages=[{"role": "user", "content": prompt_text}],
-            ) as stream:
-                for text_chunk in stream.text_stream:
-                    if t_first is None:
-                        t_first = time.monotonic()
-                    text_parts.append(text_chunk)
-                final_msg = stream.get_final_message()
+                with client.messages.stream(
+                    model=model_name,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    messages=[{"role": "user", "content": prompt_text}],
+                ) as stream:
+                    for text_chunk in stream.text_stream:
+                        if t_first is None:
+                            t_first = time.monotonic()
+                        text_parts.append(text_chunk)
+                    final_msg = stream.get_final_message()
 
-            t_done = time.monotonic()
-            ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+                t_done = time.monotonic()
+                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
 
-            return TokenScribeCallResult(
-                input_tokens=final_msg.usage.input_tokens,
-                output_tokens=final_msg.usage.output_tokens,
-                response_text="".join(text_parts),
-                source="api_reported",
-                time_to_first_token_ms=ttft_ms,
-                time_to_completion_ms=completion_ms,
-            )
-        except Exception as e:
-            err = str(e)
-            return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
+                return TokenScribeCallResult(
+                    input_tokens=final_msg.usage.input_tokens,
+                    output_tokens=final_msg.usage.output_tokens,
+                    response_text="".join(text_parts),
+                    source="api_reported",
+                    time_to_first_token_ms=ttft_ms,
+                    time_to_completion_ms=completion_ms,
+                )
+            except Exception as e:
+                err = str(e)
+                return TokenScribeCallResult(success=False, error=err, model_not_found=_is_model_not_found(err), rate_limited=_is_rate_limited(err), timed_out=_is_timeout(err))
 
     # ------------------------------------------------------------------
     # Google Gemini
