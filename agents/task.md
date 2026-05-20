@@ -506,5 +506,72 @@
     "requires_db_changes": false,
     "notes_for_agent": "New service module (no class). evaluate(response_text, prompt_id, language_name, extra_any_variants, extra_target_variants) -> dict|None. Returns {correct, in_target_language, language_leakage} or None when prompt_id has no registered expected answers. correct = factual answer present in any recognised language form. in_target_language = answer uses the target language's surface form. language_leakage = correct AND NOT in_target_language. Matching is substring-based after _normalize() which: maps 8 non-ASCII numeral blocks (Arabic-Indic, Eastern Arabic, Devanagari, Thai, Bengali, Gurmukhi, Gujarati, Full-width) to ASCII digits; lowercases; strips punctuation; collapses whitespace. EXPECTED_ANSWERS dict keyed by prompt_id with any_language_variants + target_language_variants per language. Supports extra_any_variants / extra_target_variants for MAGI-discovered runtime variants. Currently registered: prompt 18 (capital of France), 19 (placeholder), 20 (HTTP acronym), 21 (boolean yes)."
   }
+  ,
+  {
+    "task_id": "T035",
+    "title": "MAGI answer discovery + NE labeling (3-judge panel, majority vote)",
+    "status": "completed",
+    "dependencies": ["T012", "T022", "T034"],
+    "affected_modules": ["MAGIService", "ExperimentModel", "QueueService", "DatabaseManager"],
+    "affected_files": [
+      "app/services/magi_service.py",
+      "app/models/experiment_model.py",
+      "app/services/queue_service.py",
+      "app/models/database.py"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New MAGIService methods: discover_answer_variant(prompt_text, language, response_text, llm_service, judge_models) — 3-judge panel with majority vote (>=2/3), returns {is_correct, canonical_form, judges}; label_named_entities(prompt_text, language, llm_service, judge_models) — 3-judge panel per-entity majority vote, returns list[{entity_name, expected_form, allow_original}]. New JSON parsers: _parse_json_bool_response(), _parse_json_array_response(). New DB tables: magi_answer_variants (prompt_id, language_id nullable=any-lang, variant, judge_name, judge_model); ne_expectations (prompt_id, language_id, entity_name, expected_form, allow_original, UNIQUE(prompt_id, language_id, entity_name)); ne_labeling_status (prompt_id, language_id, status=pending|done|failed, PRIMARY KEY). New ExperimentModel methods: get_magi_answer_variants(), insert_magi_answer_variant(), update_answer_correct_by_row(), get_ne_expectations(), get_ne_labeling_status(), set_ne_labeling_status(), insert_ne_expectations(). New queue operations: magi_answer_discovery (timeout 60s) and magi_ne_labeling (timeout 60s). QueueModel: has_pending_running_of_type(), requeue_for_dependency(). Post-llm_call pipeline in QueueService: run correctness eval, OLF, NEPR, enqueue answer_discovery if answer_correct is None. magi_ne_labeling enqueued at experiment creation per (prompt, language) where status is not 'done'; after completion calls update_answer_correct_by_row() for all existing token_results of the same (prompt, language)."
+  }
+  ,
+  {
+    "task_id": "T036",
+    "title": "NEService (NEPR) + OLFService (Output Language Fidelity)",
+    "status": "completed",
+    "dependencies": ["T034", "T035"],
+    "affected_modules": ["NEService", "OLFService"],
+    "affected_files": [
+      "app/services/ne_service.py",
+      "app/services/olf_service.py",
+      "data/.gitkeep",
+      "requirements.txt"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "ne_service.py: compute_nepr(response_text, expectations) -> float|None. expectations = list[{entity_name, expected_form, allow_original}]. Fraction of expected entities found (substring match via _normalize). Returns None if expectations is empty. olf_service.py: compute_olf(response_text, language_name) -> float|None. Splits response into sentence-level chunks (MIN_CHUNK_CHARS=15). Per-chunk fasttext lid.176 prediction. Weights by char count. Returns fraction of chars detected as target language. Model lazily loaded from data/lid.176.bin (130 MB, not bundled — user must download). LANG_TO_FT maps 12 TokenScribe language names to ISO 639-1 codes. Returns None on model unavailable, unknown language, or too-short text. Both services added to requirements.txt (fasttext). data/ directory created with .gitkeep."
+  }
+  ,
+  {
+    "task_id": "T037",
+    "title": "New token_results columns: correctness metrics, OLF, NEPR, timing, reasoning_override_requested",
+    "status": "completed",
+    "dependencies": ["T027", "T035", "T036"],
+    "affected_modules": ["DatabaseManager", "ExperimentModel", "ExportService"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/models/experiment_model.py",
+      "app/services/export_service.py"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New columns on token_results (all added via _migrate_schema() guard): reasoning_override_requested TEXT ('on'/'off'/NULL); answer_correct INT, answer_in_target_language INT, language_leakage INT (0/1/NULL); olf_score REAL, nepr_score REAL; total_query_time_ms INT, time_to_first_token_ms INT, time_to_completion_ms INT. New ExperimentModel methods: update_correctness_metrics(token_result_id, metrics), update_olf_score(token_result_id, score), update_nepr_score(token_result_id, score), get_prompt_base_text(prompt_id). ExportService.export_csv() adds reasoning_override_requested to fieldnames. tokenizer_drift and cost_reasoning also added as CSV fields."
+  }
+  ,
+  {
+    "task_id": "T038",
+    "title": "Bulk AI translation with PEI-aware refinement + run duplication",
+    "status": "completed",
+    "dependencies": ["T005", "T011", "T012", "T022"],
+    "affected_modules": ["TranslationAIService", "StudyController", "ExperimentController", "Views"],
+    "affected_files": [
+      "app/services/translation_ai_service.py",
+      "app/services/__init__.py",
+      "app/controllers/study_controller.py",
+      "app/controllers/experiment_controller.py",
+      "app/views/templates/studies/detail.html",
+      "app/views/templates/experiments/new.html",
+      "app/views/templates/experiments/list.html",
+      "app/views/templates/prompts/form.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "New service: translation_ai_service.run_ai_translate(prompt, language_ids, sfs_min, pei_profile, pei_max, candidates_per_lang, db, settings, log_service) -> dict. Iterative loop: generate via gpt-5.5, score SFS+LER, check PEI convergence (max 3 retries per language), detect PEI outliers via _outlier_lang_ids(), adjust structural direction. pei_profile: 'homogeneous' (pei_max 0.20) | 'moderate'/'cross_script' (pei_max 0.35). Returns {created, warnings, accepted_pei, accepted, note, langs, candidates_by_lang}; accepted=False means fallback to best-of-N. New StudyController endpoints: POST /studies/<id>/bulk-translate (spawns _bulk_translate_worker daemon thread; in-memory tracker _bulk_translate_jobs[study_id]); GET /studies/<id>/bulk-translate-status (JSON {active, total, completed, current_prompt, error}). Form fields: prompt_ids, language_ids, bulk_sfs_min, bulk_pei_profile, bulk_candidates_per_lang, bulk_run_magi, bulk_run_phase2, bulk_auto_approve. After generating + scoring candidates, worker optionally runs MAGI Phase 1 + Phase 2, then optionally auto-approves best candidate. UI: bulk translate panel in studies/detail.html with prompt checkboxes, language multi-select, config fields, progress bar polling bulk-translate-status. Run duplication: GET /experiments/<id>/duplicate pre-fills new-experiment form (study, models, repetitions, reasoning_overrides) from an existing run."
+  }
 ]
 ```

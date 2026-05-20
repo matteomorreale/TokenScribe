@@ -70,6 +70,15 @@ token_results                 -- INSERT + retry; immutable per (run, cell, repet
   repetition_index INTEGER NOT NULL DEFAULT 0,-- 0-based repetition within the cell
   attempt_index INTEGER NOT NULL DEFAULT 0,   -- auto-incremented atomically on retry
   attempt_status TEXT NOT NULL DEFAULT 'success',  -- "success" | "retry"
+  reasoning_override_requested TEXT,          -- 'on' | 'off' | NULL (from llm_call payload)
+  answer_correct INTEGER,                     -- 0/1/NULL — factual answer present (CorrectnessService)
+  answer_in_target_language INTEGER,          -- 0/1/NULL — answer in requested language
+  language_leakage INTEGER,                   -- 0/1/NULL — correct but wrong language
+  olf_score REAL,                             -- 0.0–1.0 | NULL (OLFService, fasttext)
+  nepr_score REAL,                            -- 0.0–1.0 | NULL (NEService, requires NE labeling)
+  total_query_time_ms INTEGER,                -- wall-clock time for full LLM call (ms)
+  time_to_first_token_ms INTEGER,             -- time to first token / streaming start (ms)
+  time_to_completion_ms INTEGER,              -- time from first token to last token (ms)
   created_at
 
   UNIQUE(run_id, prompt_id, language_id, model_id, repetition_index, attempt_index)
@@ -155,6 +164,33 @@ run_history                   -- archivio storico per redo/replace (snapshot JSO
   replaced_by_model_name TEXT,
   results_json TEXT NOT NULL DEFAULT '[]'  -- snapshot completo dei token_results (array JSON)
 
+magi_answer_variants          -- MAGI-discovered answer variants (dynamically extended by answer discovery)
+  id, prompt_id → prompts.id,
+  language_id → languages.id NULL,  -- NULL = valid in any language
+  variant TEXT NOT NULL,
+  judge_name TEXT,              -- e.g. "balthasar"
+  judge_model TEXT,             -- model name used by this judge
+  created_at
+  INDEX idx_mav_prompt(prompt_id)
+
+ne_expectations               -- Named entity localized forms labeled by MAGI (per prompt × language)
+  id, prompt_id → prompts.id, language_id → languages.id,
+  entity_name TEXT NOT NULL,    -- English form (e.g. "France")
+  expected_form TEXT NOT NULL,  -- localized form (e.g. "Francia")
+  allow_original INTEGER NOT NULL DEFAULT 0,  -- 1 if English form also acceptable
+  judge_name TEXT,
+  judge_model TEXT,
+  computed_at
+  UNIQUE(prompt_id, language_id, entity_name)
+  INDEX idx_ne_prompt_lang(prompt_id, language_id)
+
+ne_labeling_status            -- completion tracker for MAGI NE labeling per (prompt, language)
+  prompt_id → prompts.id,
+  language_id → languages.id,
+  status TEXT NOT NULL DEFAULT 'pending',  -- "pending" | "done" | "failed"
+  computed_at
+  PRIMARY KEY (prompt_id, language_id)
+
 settings
   id, key (UNIQUE), value, updated_at
 
@@ -176,10 +212,16 @@ prompts ──< approved_translations
 prompts ──< pei_results          (via run)
 prompts ──< pei_group_results    (via run)
 prompts ──< selection_score_results (via candidate)
+prompts ──< magi_answer_variants
+prompts ──< ne_expectations
+prompts ──< ne_labeling_status
 translation_candidates ──1 translation_scores
 translation_candidates ──1 selection_score_results
 translation_candidates ──> approved_translations
 languages ──> writing_systems
+languages ──> magi_answer_variants (nullable — NULL = any language)
+languages ──> ne_expectations
+languages ──> ne_labeling_status
 experiment_runs ──< token_results
 experiment_runs ──< pei_results
 experiment_runs ──< pei_group_results

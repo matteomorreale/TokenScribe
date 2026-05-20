@@ -10,8 +10,10 @@ GET  /studies/<id>                    study detail
 GET  /studies/<id>/edit               edit form
 POST /studies/<id>/edit               update study
 POST /studies/<id>/delete             delete study
-GET  /studies/<id>/magi-repair-status JSON — progress of the active MAGI repair run (if any)
-POST /studies/<id>/regen-magi         bulk re-compute Phase 1 + Phase 2 for all (or selected) prompts
+GET  /studies/<id>/magi-repair-status    JSON — progress of the active MAGI repair run (if any)
+POST /studies/<id>/regen-magi            bulk re-compute Phase 1 + Phase 2 for all (or selected) prompts
+POST /studies/<id>/bulk-translate        start bulk AI translation job (background thread)
+GET  /studies/<id>/bulk-translate-status JSON — progress of the active bulk translate job (if any)
 ```
 
 ### POST /studies/{study_id}/regen-magi — Form Fields
@@ -22,6 +24,22 @@ prompt_ids   list[int]  (optional) subset of prompt IDs to regenerate; omit to r
 
 Creates a dedicated `experiment_run` with `notes='[MAGI repair]'`, recomputes MAGI Phase 1
 for all approved+scored candidates, then enqueues Phase 2 items if judges are configured.
+
+### POST /studies/{study_id}/bulk-translate — Form Fields
+
+```text
+prompt_ids           list[int]  (optional) subset of prompt IDs; omit to translate all
+language_ids         list[int]  languages to generate candidates for
+bulk_sfs_min         float      minimum SFS threshold (default 0.85)
+bulk_pei_profile     str        "homogeneous" | "moderate" | "cross_script" (default "homogeneous")
+bulk_candidates_per_lang  int   candidates to generate per language (default 2)
+bulk_run_magi        "1"        run MAGI Phase 1 after generating candidates
+bulk_run_phase2      "1"        run MAGI Phase 2 after Phase 1 (requires bulk_run_magi=1 and 3 judges configured)
+bulk_auto_approve    "1"        auto-approve the best candidate per language after scoring
+```
+
+Runs in a daemon thread; poll `GET /<id>/bulk-translate-status` for progress.
+Returns JSON `{active, total, completed, current_prompt, error}`.
 
 ## Prompts
 
@@ -35,6 +53,16 @@ POST /prompts/<id>/edit               update prompt
 POST /prompts/<id>/delete             delete prompt
 POST /prompts/<id>/pei/refresh        recompute PEI from current approved translations and save snapshot
 POST /prompts/<id>/notes              save prompt notes field (inline form on detail page)
+POST /prompts/migrate-delimiters      bulk-replace prompt delimiters (e.g. <<< >>> → <input> </input>)
+```
+
+### POST /prompts/migrate-delimiters — Form Fields
+
+```text
+old_open   str  opening delimiter to replace (default "<<<")
+old_close  str  closing delimiter to replace (default ">>>")
+new_open   str  new opening delimiter (default "<input>")
+new_close  str  new closing delimiter (default "</input>")
 ```
 
 ## Translations
@@ -88,6 +116,7 @@ POST /experiments/<id>/redo-model             redo all calls for one model (form
 POST /experiments/<id>/replace-model          swap one model for another (form: old_model_id, new_model_id, save_history)
 POST /experiments/<id>/revalidate-status      recompute run status from DB state (fixes stuck runs)
 POST /experiments/<id>/add-models             add new models to a completed/partial/stopped run
+GET  /experiments/<id>/duplicate              pre-fill new-experiment form with same study/models/settings as an existing run
 POST /experiments/<id>/update-notes           update run notes (JSON body: {notes: str}); returns JSON
 POST /experiments/<id>/recompute-tokens       retroactively fix inflated visible_output_tokens via tiktoken heuristic
 ```
@@ -150,9 +179,10 @@ run_id, prompt_id, base_text, category, prompt_notes,
 language_name, language_code, writing_system, script_group, morphology_group,
 model_name, provider_name,
 input_tokens, visible_output_tokens, reasoning_tokens,
-api_reported_output_tokens, ror,
+tokenizer_drift, api_reported_output_tokens, ror,
 is_reasoning_capable, reasoning_observed, reasoning_state,
-cost_visible_only, cost, visible_output_text_length,
+reasoning_override_requested,
+cost_visible_only, cost_reasoning, cost, visible_output_text_length,
 token_accounting_mode, source, created_at,
 pei, pei_band, script_group_count, morphology_group_count,
 pei_groups_script_group (JSON), pei_groups_morphology_group (JSON),
@@ -167,7 +197,11 @@ Note: `is_reasoning_model` has been replaced by three fields:
 - `reasoning_observed` — `reasoning_tokens > REASONING_THRESHOLD` (dynamic, per run result)
 - `reasoning_state` — 4-way classification: `active` | `capable_but_inactive` | `anomaly` | `non_reasoning`
 
+Note: `reasoning_override_requested` reflects the override stored in `token_results` (`"on"`, `"off"`, or NULL).
+
 Note: `magi_judges` per-judge breakdown is available in JSON export only (nested object).
+
+Note: `answer_correct`, `answer_in_target_language`, `language_leakage`, `olf_score`, `nepr_score` are stored in `token_results` but not yet included in the CSV export (available via direct DB query or JSON export).
 
 ## JSON Export Structure
 
