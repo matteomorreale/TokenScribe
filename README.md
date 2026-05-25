@@ -66,6 +66,14 @@ python run.py
 
 Open `http://localhost:5000` in your browser.
 
+> **OLF metric (optional):** the Output Language Fidelity metric requires the fasttext language-ID model (~125 MB), which is not bundled in the repo. Download it once with:
+>
+> ```bash
+> curl -L https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin -o data/lid.176.bin
+> ```
+>
+> Without this file the app works normally — OLF scores will simply be absent from results.
+
 The SQLite database is created automatically at `instance/tokenscribe.db` on first run.
 
 ---
