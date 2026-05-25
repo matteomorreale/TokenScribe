@@ -279,11 +279,13 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
-        # Response timing metrics (ms): total wall time, time-to-first-token, generation time
+        # Response timing metrics (ms): total wall time, time-to-first-token, generation time,
+        # and stream/connection-close overhead (Anthropic only).
         try:
             cur = conn.execute("PRAGMA table_info(token_results)")
             columns = [row[1] for row in cur.fetchall()]
-            for col in ("total_query_time_ms", "time_to_first_token_ms", "time_to_completion_ms"):
+            for col in ("total_query_time_ms", "time_to_first_token_ms",
+                        "time_to_completion_ms", "time_to_stream_close_ms"):
                 if col not in columns:
                     conn.execute(f"ALTER TABLE token_results ADD COLUMN {col} INTEGER")
         except sqlite3.Error:

@@ -413,6 +413,7 @@ class QueueService:
                 total_query_time_ms=result.total_query_time_ms,
                 time_to_first_token_ms=result.time_to_first_token_ms,
                 time_to_completion_ms=result.time_to_completion_ms,
+                time_to_stream_close_ms=result.time_to_stream_close_ms,
             )
             raise RuntimeError(f"LLM call failed: {result.error}")
 
@@ -482,6 +483,7 @@ class QueueService:
             total_query_time_ms=result.total_query_time_ms,
             time_to_first_token_ms=result.time_to_first_token_ms,
             time_to_completion_ms=result.time_to_completion_ms,
+            time_to_stream_close_ms=result.time_to_stream_close_ms,
         )
 
         if is_valid and row_id:

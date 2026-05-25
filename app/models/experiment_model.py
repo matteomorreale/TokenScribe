@@ -176,6 +176,7 @@ class ExperimentModel:
         total_query_time_ms: int = None,
         time_to_first_token_ms: int = None,
         time_to_completion_ms: int = None,
+        time_to_stream_close_ms: int = None,
     ) -> int:
         """Insert a token result row. attempt_index is computed atomically via a
         MAX+1 subquery so that concurrent retries never collide on the unique key."""
@@ -202,7 +203,8 @@ class ExperimentModel:
                     normalized_output_tokens, visible_output_tokens, response_valid,
                     repetition_index, attempt_index, attempt_status,
                     reasoning_override_requested,
-                    total_query_time_ms, time_to_first_token_ms, time_to_completion_ms)
+                    total_query_time_ms, time_to_first_token_ms, time_to_completion_ms,
+                    time_to_stream_close_ms)
                    SELECT ?, ?, ?, ?,
                           ?, ?,
                           ?, ?,
@@ -215,7 +217,7 @@ class ExperimentModel:
                                       AND t2.model_id=? AND t2.repetition_index=?), 0),
                           ?,
                           ?,
-                          ?, ?, ?""",
+                          ?, ?, ?, ?""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
@@ -225,7 +227,8 @@ class ExperimentModel:
                  run_id, prompt_id, language_id, model_id, repetition_index,
                  attempt_status,
                  reasoning_override_requested,
-                 total_query_time_ms, time_to_first_token_ms, time_to_completion_ms),
+                 total_query_time_ms, time_to_first_token_ms, time_to_completion_ms,
+                 time_to_stream_close_ms),
             )
             conn.commit()
             return cur.lastrowid
@@ -474,6 +477,10 @@ class ExperimentModel:
                           COALESCE(tr.response_valid, CASE WHEN COALESCE(tr.response_text, '') = '' THEN 0 ELSE 1 END) AS response_valid,
                           tr.reasoning_override_requested,
                           tr.created_at,
+                          tr.total_query_time_ms,
+                          tr.time_to_first_token_ms,
+                          tr.time_to_completion_ms,
+                          tr.time_to_stream_close_ms,
                           p.base_text, p.category, p.notes as prompt_notes,
                           l.name as language_name, l.code as language_code,
                           l.script_group as script_group,

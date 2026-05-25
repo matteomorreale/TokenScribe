@@ -10,9 +10,14 @@ Optional LogService injection: pass log_service= to __init__ to enable non-block
 operation logging. Each call records provider, model, tokens, cost, duration, response.
 
 Timing fields in TokenScribeCallResult:
-  total_query_time_ms      — wall time from dispatch to result (always set)
+  total_query_time_ms      — wall time of the API call itself (always set);
+                             for Anthropic this is measured from after semaphore
+                             acquisition so it excludes queue-wait overhead
   time_to_first_token_ms   — latency until first streamed token chunk (streaming providers only)
-  time_to_completion_ms    — time from first token to last token (streaming providers only)
+  time_to_completion_ms    — time from first token to last received chunk (streaming providers only)
+  time_to_stream_close_ms  — time from last chunk to stream/connection close, including
+                             get_final_message(); Anthropic only; isolates connection-teardown
+                             overhead from pure generation time
 """
 
 import threading
@@ -105,11 +110,13 @@ class TokenScribeCallResult:
     model_not_found: bool = False
     rate_limited: bool = False
     timed_out: bool = False
-    # Timing (milliseconds). total_query_time_ms is always set; TTFT and
-    # time_to_completion are set only for streaming-capable providers.
+    # Timing (milliseconds). total_query_time_ms is always set; TTFT,
+    # time_to_completion, and time_to_stream_close are streaming-only.
+    # For Anthropic: total ≈ ttft + completion + stream_close.
     total_query_time_ms: Optional[int] = None
     time_to_first_token_ms: Optional[int] = None
     time_to_completion_ms: Optional[int] = None
+    time_to_stream_close_ms: Optional[int] = None
 
 
 class LLMService:
@@ -175,7 +182,10 @@ class LLMService:
             result = handler(model_name, prompt_text)
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        result.total_query_time_ms = duration_ms
+        # Anthropic handler measures from inside the semaphore and pre-sets this.
+        # Other handlers leave it None, so we fill it from the outer wall clock.
+        if result.total_query_time_ms is None:
+            result.total_query_time_ms = duration_ms
 
         if result.success:
             result.cost = (
@@ -390,10 +400,15 @@ class LLMService:
         with _ANTHROPIC_SEMAPHORE:
             try:
                 import anthropic
-                client = anthropic.Anthropic(api_key=api_key)
+                # max_retries=0: SDK-internal rate-limit retries (with Retry-After
+                # backoff) would silently contaminate total_query_time_ms. The
+                # queue layer re-enqueues on RateLimitError, so retries are handled
+                # explicitly and with correct per-attempt timing.
+                client = anthropic.Anthropic(api_key=api_key, max_retries=0)
 
                 t_req = time.monotonic()
                 t_first = None
+                t_last = None
                 text_parts = []
 
                 with client.messages.stream(
@@ -404,19 +419,26 @@ class LLMService:
                     for text_chunk in stream.text_stream:
                         if t_first is None:
                             t_first = time.monotonic()
+                        t_last = time.monotonic()
                         text_parts.append(text_chunk)
                     final_msg = stream.get_final_message()
-
+                # t_done is set after the context manager exits so it captures
+                # get_final_message() + connection teardown separately from generation.
                 t_done = time.monotonic()
-                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+
+                ttft_ms = int((t_first - t_req) * 1000) if t_first else None
+                completion_ms = int((t_last - t_first) * 1000) if t_first else None
+                stream_close_ms = int((t_done - (t_last or t_req)) * 1000)
 
                 return TokenScribeCallResult(
                     input_tokens=final_msg.usage.input_tokens,
                     output_tokens=final_msg.usage.output_tokens,
                     response_text="".join(text_parts),
                     source="api_reported",
+                    total_query_time_ms=int((t_done - t_req) * 1000),
                     time_to_first_token_ms=ttft_ms,
                     time_to_completion_ms=completion_ms,
+                    time_to_stream_close_ms=stream_close_ms,
                 )
             except Exception as e:
                 err = str(e)
