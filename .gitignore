@@ -36,6 +36,7 @@ agents/log_history/
 .env
 .env.*
 .envrc
+*.bin
 
 .history
 .history/
