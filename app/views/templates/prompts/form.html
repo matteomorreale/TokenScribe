@@ -24,6 +24,14 @@
              placeholder="e.g. instruction, summarization, translation…">
     </div>
     <div class="ts-form-group">
+      <label class="ts-label" for="analysis_type">Analysis Type</label>
+      <select class="ts-input" id="analysis_type" name="analysis_type">
+        <option value="standard" {% if not prompt or prompt.analysis_type == 'standard' %}selected{% endif %}>Standard</option>
+        <option value="tsf" {% if prompt and prompt.analysis_type == 'tsf' %}selected{% endif %}>TSF — Translation Strategy Fingerprint</option>
+      </select>
+      <div class="ts-input-hint">TSF prompts attivano la classificazione post-run {keep_latin, transliterate, translate_semantic, mistranslate} su ogni cella tramite panel MAGI a 3 giudici.</div>
+    </div>
+    <div class="ts-form-group">
       <label class="ts-label" for="base_text">
         Base Prompt Text *
         <button type="button" id="ts-insert-template" class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:.75rem; text-transform:none; letter-spacing:0;">

@@ -36,24 +36,38 @@ class PromptModel:
         finally:
             conn.close()
 
-    def create(self, study_id: int, base_text: str, category: str = "", notes: str = "") -> int:
+    def create(
+        self,
+        study_id: int,
+        base_text: str,
+        category: str = "",
+        notes: str = "",
+        analysis_type: str = "standard",
+    ) -> int:
         conn = self.db.get_connection()
         try:
             cur = conn.execute(
-                "INSERT INTO prompts (study_id, base_text, category, notes) VALUES (?, ?, ?, ?)",
-                (study_id, base_text, category, notes),
+                "INSERT INTO prompts (study_id, base_text, category, notes, analysis_type) VALUES (?, ?, ?, ?, ?)",
+                (study_id, base_text, category, notes, analysis_type or "standard"),
             )
             conn.commit()
             return cur.lastrowid
         finally:
             conn.close()
 
-    def update(self, prompt_id: int, base_text: str, category: str = "", notes: str = ""):
+    def update(
+        self,
+        prompt_id: int,
+        base_text: str,
+        category: str = "",
+        notes: str = "",
+        analysis_type: str = "standard",
+    ):
         conn = self.db.get_connection()
         try:
             conn.execute(
-                "UPDATE prompts SET base_text=?, category=?, notes=? WHERE id=?",
-                (base_text, category, notes, prompt_id),
+                "UPDATE prompts SET base_text=?, category=?, notes=?, analysis_type=? WHERE id=?",
+                (base_text, category, notes, analysis_type or "standard", prompt_id),
             )
             conn.commit()
         finally:

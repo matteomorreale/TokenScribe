@@ -9,11 +9,7 @@ Jinja2==3.1.4
 # LLM Provider SDKs
 openai>=1.30.0
 anthropic>=0.28.0
-google-generativeai>=0.8.0
-# grpcio-status must stay in sync with grpcio (same minor version) to avoid
-# NameError: name 'rpc_status' is not defined in google.api_core.exceptions
-grpcio>=1.71.0
-grpcio-status>=1.71.0
+google-genai>=2.6.0
 # mistralai v2 uses: from mistralai.client.sdk import Mistral
 mistralai>=2.0.0
 

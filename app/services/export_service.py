@@ -89,6 +89,7 @@ class ExportService:
             "magi_required",
             "magi_score",
             "magi_disagreement",
+            "tsf_strategy",
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()

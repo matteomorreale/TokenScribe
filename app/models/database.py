@@ -289,6 +289,28 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
 
+        # TSF (Translation Strategy Fingerprint) per-cell classification
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "tsf_strategy" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN tsf_strategy TEXT")
+            if "tsf_judges" not in columns:
+                conn.execute("ALTER TABLE token_results ADD COLUMN tsf_judges TEXT")
+        except sqlite3.Error:
+            pass
+
+        # analysis_type on prompts: 'standard' | 'tsf'
+        try:
+            cur = conn.execute("PRAGMA table_info(prompts)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "analysis_type" not in columns:
+                conn.execute(
+                    "ALTER TABLE prompts ADD COLUMN analysis_type TEXT NOT NULL DEFAULT 'standard'"
+                )
+        except sqlite3.Error:
+            pass
+
         # run_history table (added in redo/replace feature)
         try:
             conn.execute("""

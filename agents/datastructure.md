@@ -16,7 +16,8 @@ studies
 
 prompts
   id, study_id → studies.id, base_text, category,
-  notes      TEXT DEFAULT '',   -- methodological notes, included in JSON exports
+  notes         TEXT DEFAULT '',    -- methodological notes, included in JSON exports
+  analysis_type TEXT DEFAULT 'standard', -- "standard" | "tsf" (TSF probes trigger post-run strategy classification)
   pei_value  REAL,              -- snapshot: last confirmed PEI
   pei_cv_char REAL,
   pei_cv_word REAL,
@@ -76,6 +77,8 @@ token_results                 -- INSERT + retry; immutable per (run, cell, repet
   language_leakage INTEGER,                   -- 0/1/NULL — correct but wrong language
   olf_score REAL,                             -- 0.0–1.0 | NULL (OLFService, fasttext)
   nepr_score REAL,                            -- 0.0–1.0 | NULL (NEService, requires NE labeling)
+  tsf_strategy TEXT,                          -- NULL | "keep_latin" | "transliterate" | "translate_semantic" | "mistranslate" (TSFService, 3-judge majority vote, only for prompts.analysis_type='tsf')
+  tsf_judges TEXT,                            -- JSON {balthasar:{model_id,model_name,strategy,raw_response,error,attempts}, caspar:{…}, melchior:{…}} | NULL
   total_query_time_ms INTEGER,                -- wall-clock time for full LLM call (ms)
   time_to_first_token_ms INTEGER,             -- time to first token / streaming start (ms)
   time_to_completion_ms INTEGER,              -- time from first token to last token (ms)

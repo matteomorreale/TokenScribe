@@ -48,6 +48,7 @@ _TIMEOUTS = {
     "llm_call":              150,
     "magi_answer_discovery":  60,
     "magi_ne_labeling":       60,
+    "tsf_classification":     90,
     "compute_pei":            45,
     "finalize_pei_groups":    30,
 }
@@ -202,6 +203,7 @@ class QueueService:
             "llm_call":               self._exec_llm_call,
             "magi_answer_discovery":  self._exec_magi_answer_discovery,
             "magi_ne_labeling":       self._exec_magi_ne_labeling,
+            "tsf_classification":     self._exec_tsf_classification,
             "compute_pei":            self._exec_compute_pei,
             "finalize_pei_groups":    self._exec_finalize_pei_groups,
         }
@@ -426,25 +428,31 @@ class QueueService:
         # so any future offender is caught automatically.
         # Ceilings: alphabetic scripts ~4 chars/token → 2.0 tok/char is already 2×
         # the worst-case; logographic scripts (CJK) are denser → 1.5 tok/char.
+        # When the provider already reports reasoning_tokens correctly (e.g. DeepSeek),
+        # use only the visible portion for the TPC test to avoid false positives.
         _use_local = False
-        if has_text and char_len > 0 and api_output > 0:
-            tpc = api_output / char_len
+        visible_for_tpc = api_output - result.reasoning_tokens if result.reasoning_tokens > 0 else api_output
+        if has_text and char_len > 0 and visible_for_tpc > 0:
+            tpc = visible_for_tpc / char_len
             threshold = 1.5 if _is_logographic(lang_code) else 2.0
             if tpc > threshold:
                 _use_local = True
                 logger.warning(
                     "Inflated API token count detected: provider=%s model=%s "
-                    "lang=%s api_output=%d char_len=%d tpc=%.2f threshold=%.1f — "
+                    "lang=%s api_output=%d visible_for_tpc=%d char_len=%d tpc=%.2f threshold=%.1f — "
                     "recomputing visible_output_tokens via tiktoken",
                     payload.get("provider", "?"), payload.get("model_name", "?"),
-                    lang_code or "?", api_output, char_len, tpc, threshold,
+                    lang_code or "?", api_output, visible_for_tpc, char_len, tpc, threshold,
                 )
 
         if _use_local:
             local_toks = _local_visible_token_count(response_text)
             if local_toks > 0:
                 visible_output_tokens = local_toks
-                result.reasoning_tokens = max(0, api_output - local_toks)
+                # Only override reasoning_tokens if the provider did not report them
+                # (i.e. Qwen-style: reasoning bundled but not broken out separately).
+                if result.reasoning_tokens == 0:
+                    result.reasoning_tokens = max(0, api_output - local_toks)
             else:
                 visible_output_tokens = max(0, api_output - result.reasoning_tokens)
         else:
@@ -536,6 +544,30 @@ class QueueService:
                         em.update_nepr_score(row_id, nepr)
             except Exception:
                 logger.exception("NEPR computation failed for row=%d", row_id)
+
+            # --- TSF (Translation Strategy Fingerprint) ---
+            try:
+                if em.get_prompt_analysis_type(prompt_id) == "tsf":
+                    base_text = em.get_prompt_base_text(prompt_id)
+                    if base_text:
+                        qm.enqueue(
+                            run_id=run_id,
+                            operation_type="tsf_classification",
+                            item_key=f"tsf:tr{row_id}",
+                            payload={
+                                "run_id":           run_id,
+                                "prompt_id":        prompt_id,
+                                "prompt_base_text": base_text,
+                                "language_name":    payload.get("language_name", ""),
+                                "response_text":    response_text,
+                                "token_result_id":  row_id,
+                            },
+                            priority=2,
+                        )
+            except Exception:
+                logger.exception(
+                    "TSF enqueue failed for prompt=%d row=%d", prompt_id, row_id
+                )
 
         if not is_valid:
             raw_len = len(result.response_text or "")
@@ -680,6 +712,49 @@ class QueueService:
         logger.info(
             "MAGI NE labeling: %d entities (majority-voted) for prompt=%d lang=%s (run=%d)",
             len(expectations), prompt_id, language_name, run_id,
+        )
+
+    def _exec_tsf_classification(self, payload: dict) -> None:
+        """3-judge majority vote to classify translation strategy for TSF probe prompts."""
+        import json as _json
+        from app.services.tsf_service import TSFService
+        from app.services.llm_service import LLMService
+
+        token_result_id  = int(payload["token_result_id"])
+        prompt_base_text = payload.get("prompt_base_text", "")
+        language_name    = payload.get("language_name", "")
+        response_text    = payload.get("response_text", "")
+
+        settings = SettingsModel(self._db, crypto=self._crypto).get_all()
+        em       = ExperimentModel(self._db)
+
+        judge_models = self._load_judge_models(settings, em)
+        if len(judge_models) < 2:
+            logger.warning(
+                "TSF classification: only %d judge(s) configured, need ≥2 for majority vote — skipping",
+                len(judge_models),
+            )
+            return
+
+        llm_svc = LLMService(settings, log_service=self._log)
+        tsf_svc = TSFService()
+
+        result = tsf_svc.run_panel(
+            prompt_text=prompt_base_text,
+            language=language_name,
+            response_text=response_text,
+            llm_service=llm_svc,
+            judge_models=judge_models,
+        )
+
+        em.update_tsf(
+            token_result_id=token_result_id,
+            strategy=result["strategy"],
+            judges_json=_json.dumps(result["judges"], ensure_ascii=False),
+        )
+        logger.info(
+            "TSF classification: row=%d strategy=%s lang=%s",
+            token_result_id, result["strategy"], language_name,
         )
 
     def _exec_compute_pei(self, payload: dict) -> None:

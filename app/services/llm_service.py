@@ -431,28 +431,17 @@ class LLMService:
         if not api_key:
             return TokenScribeCallResult(success=False, error="Google API key not configured")
         try:
-            # Preflight: grpcio-status must be importable AND injected into google.api_core.exceptions.
-            # That module loads at Flask startup; if grpcio-status wasn't ready then, rpc_status is
-            # undefined in its namespace and any API error raises NameError at rpc_status.from_call().
-            try:
-                from grpc_status import rpc_status as _rpc_status
-                import google.api_core.exceptions as _gae
-                if not getattr(_gae, "rpc_status", None):
-                    _gae.rpc_status = _rpc_status
-            except Exception as grpc_err:
-                return TokenScribeCallResult(
-                    success=False,
-                    error=f"Melchior preflight failed — grpcio-status incompatible: {grpc_err}. "
-                          "Run: pip install --upgrade grpcio-status",
-                )
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name)
-            generation_config = {"max_output_tokens": MAX_OUTPUT_TOKENS}
-            response = model.generate_content(prompt_text, generation_config=generation_config)
+            from google import genai
+            from google.genai import types as genai_types
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_text,
+                config=genai_types.GenerateContentConfig(max_output_tokens=MAX_OUTPUT_TOKENS),
+            )
             usage = response.usage_metadata
             thoughts_toks = getattr(usage, "thoughts_token_count", 0) or 0
-            visible_toks = usage.candidates_token_count or 0
+            visible_toks = getattr(usage, "candidates_token_count", 0) or 0
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_token_count,
                 output_tokens=visible_toks + thoughts_toks,

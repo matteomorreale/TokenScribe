@@ -573,5 +573,26 @@
     "requires_db_changes": false,
     "notes_for_agent": "New service: translation_ai_service.run_ai_translate(prompt, language_ids, sfs_min, pei_profile, pei_max, candidates_per_lang, db, settings, log_service) -> dict. Iterative loop: generate via gpt-5.5, score SFS+LER, check PEI convergence (max 3 retries per language), detect PEI outliers via _outlier_lang_ids(), adjust structural direction. pei_profile: 'homogeneous' (pei_max 0.20) | 'moderate'/'cross_script' (pei_max 0.35). Returns {created, warnings, accepted_pei, accepted, note, langs, candidates_by_lang}; accepted=False means fallback to best-of-N. New StudyController endpoints: POST /studies/<id>/bulk-translate (spawns _bulk_translate_worker daemon thread; in-memory tracker _bulk_translate_jobs[study_id]); GET /studies/<id>/bulk-translate-status (JSON {active, total, completed, current_prompt, error}). Form fields: prompt_ids, language_ids, bulk_sfs_min, bulk_pei_profile, bulk_candidates_per_lang, bulk_run_magi, bulk_run_phase2, bulk_auto_approve. After generating + scoring candidates, worker optionally runs MAGI Phase 1 + Phase 2, then optionally auto-approves best candidate. UI: bulk translate panel in studies/detail.html with prompt checkboxes, language multi-select, config fields, progress bar polling bulk-translate-status. Run duplication: GET /experiments/<id>/duplicate pre-fills new-experiment form (study, models, repetitions, reasoning_overrides) from an existing run."
   }
+  ,
+  {
+    "task_id": "T039",
+    "title": "TSF (Translation Strategy Fingerprint) — 3-judge panel classification",
+    "status": "completed",
+    "dependencies": ["T012", "T022", "T037"],
+    "affected_modules": ["DatabaseManager", "TSFService", "ExperimentModel", "PromptModel", "PromptController", "QueueService", "ExportService"],
+    "affected_files": [
+      "app/models/database.py",
+      "app/services/tsf_service.py",
+      "app/models/experiment_model.py",
+      "app/models/prompt_model.py",
+      "app/controllers/prompt_controller.py",
+      "app/services/queue_service.py",
+      "app/services/export_service.py",
+      "app/views/templates/prompts/form.html",
+      "app/views/templates/prompts/detail.html"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "New column prompts.analysis_type TEXT DEFAULT 'standard' ('standard'|'tsf'). New columns token_results.tsf_strategy TEXT and tsf_judges TEXT (JSON). TSFService: run_panel(prompt_text, language, response_text, llm_service, judge_models) → {strategy, judges}; 3-judge majority vote (≥2/3) classifying into {keep_latin, transliterate, translate_semantic, mistranslate}; all-different (1-1-1) returns strategy=None. ExperimentModel: update_tsf(token_result_id, strategy, judges_json), get_prompt_analysis_type(prompt_id). QueueService: new operation 'tsf_classification' (timeout 90s); enqueued post-llm_call only when prompt.analysis_type='tsf'; uses same MAGI judge models (Balthasar/Caspar/Melchior) from settings. PromptModel.create/update accept analysis_type param. PromptController reads analysis_type from form (validated to 'standard'|'tsf'). update_notes preserves existing analysis_type. form.html: select for analysis_type with hint text. detail.html: TSF badge in page header when analysis_type='tsf'. ExportService: tsf_strategy added to CSV fieldnames; tsf_judges available in JSON export via token_results rows."
+  }
 ]
 ```

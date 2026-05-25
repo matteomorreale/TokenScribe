@@ -275,6 +275,17 @@ class ExperimentModel:
         finally:
             conn.close()
 
+    def update_tsf(self, token_result_id: int, strategy: str | None, judges_json: str) -> None:
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE token_results SET tsf_strategy=?, tsf_judges=? WHERE id=?",
+                (strategy, judges_json, token_result_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     # --- Prompt access (needed by queue workers) ---
 
     def get_prompt_base_text(self, prompt_id: int) -> str | None:
@@ -284,6 +295,16 @@ class ExperimentModel:
                 "SELECT base_text FROM prompts WHERE id=?", (prompt_id,)
             ).fetchone()
             return row["base_text"] if row else None
+        finally:
+            conn.close()
+
+    def get_prompt_analysis_type(self, prompt_id: int) -> str:
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT analysis_type FROM prompts WHERE id=?", (prompt_id,)
+            ).fetchone()
+            return (row["analysis_type"] if row and row["analysis_type"] else "standard")
         finally:
             conn.close()
 

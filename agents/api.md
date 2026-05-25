@@ -188,7 +188,8 @@ pei, pei_band, script_group_count, morphology_group_count,
 pei_groups_script_group (JSON), pei_groups_morphology_group (JSON),
 ler_char, ler_token,
 magi_score_absolute, magi_score_rank, magi_score_rank_pct,
-magi_required, magi_score, magi_disagreement
+magi_required, magi_score, magi_disagreement,
+tsf_strategy
 ```
 
 Note: `is_reasoning_model` has been replaced by three fields:
@@ -202,6 +203,8 @@ Note: `reasoning_override_requested` reflects the override stored in `token_resu
 Note: `magi_judges` per-judge breakdown is available in JSON export only (nested object).
 
 Note: `answer_correct`, `answer_in_target_language`, `language_leakage`, `olf_score`, `nepr_score` are stored in `token_results` but not yet included in the CSV export (available via direct DB query or JSON export).
+
+Note: `tsf_strategy` is NULL for `analysis_type='standard'` prompts; populated only for `analysis_type='tsf'` prompts after the 3-judge panel runs. `tsf_judges` (per-judge audit trail JSON) is available in JSON export only (via `token_results` rows).
 
 ## JSON Export Structure
 

@@ -79,6 +79,7 @@ TokenScribe/
 - services/scoring_service.py
 - services/magi_service.py
 - services/translation_ai_service.py — iterative PEI-aware AI translation (called by both controllers)
+- services/tsf_service.py — TSF 3-judge panel: classify translation strategy for TSF probe prompts
 
 ### Experiment Execution
 
@@ -361,6 +362,7 @@ The same logic is available retroactively via `ExperimentModel.recompute_visible
 | `finalize_pei_groups`    | Compute per-script/morphology PEI group rows                         | 60 s    |
 | `magi_answer_discovery`  | MAGI 3-judge panel to discover correct answer variants               | 60 s    |
 | `magi_ne_labeling`       | MAGI 3-judge panel to label named entities for a (prompt, language)  | 60 s    |
+| `tsf_classification`     | TSF 3-judge panel to classify translation strategy for TSF prompts   | 90 s    |
 
 Post-`llm_call` pipeline (all enqueued automatically after each successful `llm_call`):
 
@@ -368,6 +370,7 @@ Post-`llm_call` pipeline (all enqueued automatically after each successful `llm_
 2. OLF via `OLFService.compute_olf()`
 3. NEPR via `NEService.compute_nepr()` (only if `ne_labeling_status="done"` for this prompt+language)
 4. `magi_answer_discovery` item enqueued if `answer_correct is None`
+5. `tsf_classification` item enqueued if `prompt.analysis_type="tsf"`
 
 `magi_ne_labeling` items are enqueued during experiment creation for each (prompt, language) cell where `ne_labeling_status` is not yet `"done"`. After NE labeling completes, `update_answer_correct_by_row()` is called for all existing token_results of the same (prompt, language).
 

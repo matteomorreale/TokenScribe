@@ -50,10 +50,13 @@ def new_prompt(study_id: int):
         base_text = request.form.get("base_text", "").strip()
         category = request.form.get("category", "").strip()
         notes = request.form.get("notes", "").strip()
+        analysis_type = request.form.get("analysis_type", "standard").strip()
+        if analysis_type not in ("standard", "tsf"):
+            analysis_type = "standard"
         if not base_text:
             flash("Prompt text is required.", "error")
             return render_template("prompts/form.html", study=study, prompt=None)
-        prompt_id = _pm().create(study_id, base_text, category, notes)
+        prompt_id = _pm().create(study_id, base_text, category, notes, analysis_type)
         flash("Prompt created.", "success")
         return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
     return render_template("prompts/form.html", study=study, prompt=None)
@@ -236,10 +239,13 @@ def edit_prompt(prompt_id: int):
         base_text = request.form.get("base_text", "").strip()
         category = request.form.get("category", "").strip()
         notes = request.form.get("notes", "").strip()
+        analysis_type = request.form.get("analysis_type", "standard").strip()
+        if analysis_type not in ("standard", "tsf"):
+            analysis_type = "standard"
         if not base_text:
             flash("Prompt text is required.", "error")
             return render_template("prompts/form.html", study=study, prompt=prompt)
-        _pm().update(prompt_id, base_text, category, notes)
+        _pm().update(prompt_id, base_text, category, notes, analysis_type)
         flash("Prompt updated.", "success")
         return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
     return render_template("prompts/form.html", study=study, prompt=prompt)
@@ -278,7 +284,7 @@ def update_notes(prompt_id: int):
         flash("Prompt not found.", "error")
         return redirect(url_for("study.list_studies"))
     notes = request.form.get("notes", "").strip()
-    _pm().update(prompt_id, prompt["base_text"], prompt["category"], notes)
+    _pm().update(prompt_id, prompt["base_text"], prompt["category"], notes, prompt.get("analysis_type", "standard"))
     flash("Notes saved.", "success")
     return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
 

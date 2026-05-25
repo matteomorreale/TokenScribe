@@ -15,7 +15,10 @@
 <div class="ts-page-header">
   <div>
     <h1 class="ts-page-title">Prompt #{{ prompt.id }}</h1>
-    {% if prompt.category %}<p class="ts-page-subtitle"><span class="ts-badge ts-badge-accent">{{ prompt.category }}</span></p>{% endif %}
+    <p class="ts-page-subtitle">
+      {% if prompt.category %}<span class="ts-badge ts-badge-accent">{{ prompt.category }}</span>{% endif %}
+      {% if prompt.analysis_type == 'tsf' %}<span class="ts-badge ts-badge-info" title="Translation Strategy Fingerprint — ogni cella classificata in keep_latin / transliterate / translate_semantic / mistranslate dal panel MAGI">TSF</span>{% endif %}
+    </p>
   </div>
 </div>
 
