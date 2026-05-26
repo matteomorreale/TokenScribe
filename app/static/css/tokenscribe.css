@@ -66,6 +66,20 @@ a:hover { color: var(--ts-accent-2); }
   border-bottom: 1px solid var(--ts-border);
 }
 
+.ts-sidebar-logo .logo-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ts-sidebar-logo .logo-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 .ts-sidebar-logo .logo-name {
   font-size: 1.2rem;
   font-weight: 700;

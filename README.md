@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="tokenscribe-logo.jpg" alt="TokenScribe" width="120">
+</p>
+
 # TokenScribe
 
 Scientific platform for studying how language and writing systems affect token usage in Large Language Model APIs.
