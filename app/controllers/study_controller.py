@@ -258,7 +258,7 @@ def _bulk_translate_worker(app, study_id, prompt_list, language_ids, sfs_min, pe
                 )
 
                 if result["created"] == 0:
-                    job["errors"].append(f"Prompt #{prompt_id}: nessun candidato generato")
+                    job["errors"].append(f"Prompt #{prompt_id}: no candidates generated")
                     job["done"] += 1
                     continue
 
@@ -385,7 +385,7 @@ def bulk_translate(study_id: int):
     # Block if a job is already running for this study
     existing = _BULK_JOBS.get(study_id)
     if existing and existing.get("status") == "running":
-        flash("Bulk translate già in corso per questo studio.", "warning")
+        flash("Bulk translate already in progress for this study.", "warning")
         return redirect(url_for("study.detail_study", study_id=study_id))
 
     prompt_ids = request.form.getlist("bulk_prompt_ids", type=int)
@@ -393,11 +393,11 @@ def bulk_translate(study_id: int):
     try:
         language_ids = sorted({int(x) for x in language_ids_raw if str(x).strip()})
     except Exception:
-        flash("Selezione lingue non valida.", "error")
+        flash("Invalid language selection.", "error")
         return redirect(url_for("study.detail_study", study_id=study_id))
 
     if not language_ids:
-        flash("Seleziona almeno una lingua target.", "error")
+        flash("Select at least one target language.", "error")
         return redirect(url_for("study.detail_study", study_id=study_id))
 
     sfs_min = max(0.0, min(1.0, float(request.form.get("bulk_sfs_min") or 0.92)))
@@ -417,7 +417,7 @@ def bulk_translate(study_id: int):
         prompt_list = all_prompts
 
     if not prompt_list:
-        flash("Nessun prompt selezionato.", "warning")
+        flash("No prompts selected.", "warning")
         return redirect(url_for("study.detail_study", study_id=study_id))
 
     _BULK_JOBS[study_id] = {
@@ -441,7 +441,7 @@ def bulk_translate(study_id: int):
     )
     t.start()
 
-    flash(f"Bulk translate avviato per {len(prompt_list)} prompt.", "info")
+    flash(f"Bulk translate started for {len(prompt_list)} prompts.", "info")
     return redirect(url_for("study.detail_study", study_id=study_id))
 
 
@@ -555,10 +555,10 @@ def regen_magi(study_id: int):
             else:
                 phase2_skipped = True
 
-    flash(f"MAGI Phase 1 ricalcolato per {phase1_count} candidati.", "info")
+    flash(f"MAGI Phase 1 recomputed for {phase1_count} candidates.", "info")
     if phase2_count:
-        flash(f"{phase2_count} candidati MAGI Phase 2 accodati (run #{run_id}).", "info")
+        flash(f"{phase2_count} MAGI Phase 2 candidates queued (run #{run_id}).", "info")
     if phase2_skipped:
-        flash("MAGI Judge Panel non configurato — Phase 2 saltata. Configura i tre judge in Settings.", "warning")
+        flash("MAGI Judge Panel not configured — Phase 2 skipped. Configure the three judges in Settings.", "warning")
 
     return redirect(url_for("study.detail_study", study_id=study_id))

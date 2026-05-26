@@ -145,7 +145,7 @@ def new_experiment(study_id: int):
     settings = _stm().get_all()
     log_svc  = current_app.config.get("LOG_SERVICE")
 
-    # Verifica presenza della lingua inglese prima di creare la run
+    # Verify English language is present before creating the run
     all_languages = _tm().get_all_languages()
     english = next((l for l in all_languages if l.get("code") == "en"), None)
     if not english:
@@ -238,13 +238,13 @@ def new_experiment(study_id: int):
                         magi_phase2_skipped = True
 
     if magi_auto_count > 0:
-        flash(f"MAGI Phase 1 auto-calcolato per {magi_auto_count} candidati.", "info")
+        flash(f"MAGI Phase 1 auto-computed for {magi_auto_count} candidates.", "info")
     if magi_queued_count > 0:
-        flash(f"{magi_queued_count} candidati MAGI Phase 2 accodati.", "info")
+        flash(f"{magi_queued_count} MAGI Phase 2 candidates queued.", "info")
     if magi_phase2_skipped:
         flash(
-            "MAGI Judge Panel non configurato — Phase 2 saltata. "
-            "Configura i tre judge in Settings.",
+            "MAGI Judge Panel not configured — Phase 2 skipped. "
+            "Configure the three judges in Settings.",
             "warning",
         )
 
@@ -291,7 +291,7 @@ def new_experiment(study_id: int):
             ne_label_count += 1
 
     if ne_label_count > 0:
-        flash(f"{ne_label_count} operazioni MAGI NE labeling accodate.", "info")
+        flash(f"{ne_label_count} MAGI NE labeling operations queued.", "info")
 
     # ------------------------------------------------------------------
     # 4. LLM calls (priority 2) — repetitions_per_cell items per prompt × model × language
@@ -379,7 +379,7 @@ def new_experiment(study_id: int):
 
     total_items = 1 + magi_queued_count + ne_label_count + llm_item_count + len(prompts) + 1
     flash(
-        f"Experiment run #{run_id} avviata — {total_items} operazioni in coda.",
+        f"Experiment run #{run_id} started — {total_items} operations queued.",
         "success",
     )
     return redirect(url_for("experiment.detail_experiment", run_id=run_id))

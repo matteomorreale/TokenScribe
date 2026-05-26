@@ -123,11 +123,11 @@
   <div class="ts-card-header" style="gap:.75rem;">
     <span class="ts-card-title">MAGI Selection Results</span>
     <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:.5rem;">
-      {{ magi_results|length }} candidati &nbsp;·&nbsp;
+      {{ magi_results|length }} candidates &nbsp;·&nbsp;
       Score = SFS − 0.5·PEI − 0.5·|LER−1| &nbsp;·&nbsp;
       MAGI? = rank &gt; max(1, ⌊n/4⌋)
     </span>
-    <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;" onclick="openMAGIModal()">Ricalcola</button>
+    <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;" onclick="openMAGIModal()">Recompute</button>
   </div>
   <div class="ts-table-wrap">
     <table class="ts-table">
@@ -166,7 +166,7 @@
           </td>
           <td style="font-variant-numeric:tabular-nums;">{{ "%.0f"|format(s.score_rank_pct * 100) if s.score_rank_pct is not none else '—' }}%</td>
           <td>
-            {% if s.magi_required %}<span class="ts-badge ts-badge-warning">sì</span>
+            {% if s.magi_required %}<span class="ts-badge ts-badge-warning">yes</span>
             {% else %}<span class="ts-badge ts-badge-approved">no</span>{% endif %}
           </td>
           {% if has_judges %}
@@ -191,7 +191,7 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
           <td style="font-variant-numeric:tabular-nums;">
             {% if s.magi_score is not none %}
               {{ "%.3f"|format(s.magi_score) }}
-              {% if s.magi_disagreement %}<span title="I giudici non concordano (stdev > 0.15)" style="color:var(--ts-warning,#f59e0b); margin-left:.2rem;">↯</span>{% endif %}
+              {% if s.magi_disagreement %}<span title="Judges disagree (stdev > 0.15)" style="color:var(--ts-warning,#f59e0b); margin-left:.2rem;">↯</span>{% endif %}
             {% else %}—{% endif %}
           </td>
           {% endif %}
@@ -203,8 +203,8 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
   <p style="font-size:.72rem; color:var(--ts-text-muted); padding:.4rem 1rem .5rem;">
     λ={{ magi_results[0].lambda_used if magi_results else '0.5' }} &nbsp;·&nbsp;
     ν={{ magi_results[0].nu_used if magi_results else '0.5' }} &nbsp;·&nbsp;
-    Calcolato: {{ magi_results[0].computed_at if magi_results else '—' }}
-    {% if has_judges %}&nbsp;·&nbsp; ↯ = disaccordo tra giudici (stdev &gt; 0.15){% endif %}
+    Computed: {{ magi_results[0].computed_at if magi_results else '—' }}
+    {% if has_judges %}&nbsp;·&nbsp; ↯ = judge disagreement (stdev &gt; 0.15){% endif %}
   </p>
 </div>
 {% endif %}
@@ -224,9 +224,9 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
       <thead>
         <tr>
           <th>Lingua</th>
-          <th title="Rank globale tra tutti i candidati">Rank</th>
+          <th title="Global rank among all candidates">Rank</th>
           <th title="MAGI Selection Score">Score</th>
-          {% if has_panel %}<th title="Panel LLM — media dei 3 giudici">Panel</th>{% endif %}
+          {% if has_panel %}<th title="LLM Panel — average of the 3 judges">Panel</th>{% endif %}
           <th>Status</th>
           <th>Testo</th>
         </tr>
@@ -245,7 +245,7 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
           <td style="font-variant-numeric:tabular-nums;">
             {% if r.magi_score is not none %}
               {{ "%.3f"|format(r.magi_score) }}
-              {% if r.magi_disagreement %}<span title="Disaccordo tra giudici" style="color:var(--ts-warning);">↯</span>{% endif %}
+              {% if r.magi_disagreement %}<span title="Judge disagreement" style="color:var(--ts-warning);">↯</span>{% endif %}
             {% else %}—{% endif %}
           </td>
           {% endif %}
@@ -260,12 +260,12 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
   </div>
   <div style="padding:.65rem 1rem; border-top:1px solid var(--ts-border); display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
     <span style="font-size:.8rem; color:var(--ts-text-muted);">
-      MAGI suggerisce questi candidati come migliori per ciascuna lingua. Approvali in blocco o gestiscili singolarmente.
+      MAGI suggests these candidates as the best for each language. Approve them in bulk or manage them individually.
     </span>
     <form method="post" action="{{ url_for('translation.bulk_approve_translations', prompt_id=prompt.id) }}" style="margin-left:auto;">
       <input type="hidden" name="candidate_ids" value="{{ magi_recommendations | map(attribute='candidate_id') | join(',') }}">
       <button class="ts-btn ts-btn-success ts-btn-sm" type="submit">
-        Approva tutte le raccomandazioni ({{ magi_recommendations|length }})
+        Approve all recommendations ({{ magi_recommendations|length }})
       </button>
     </form>
   </div>
@@ -299,9 +299,9 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
         <!-- Candidate selector -->
         <div>
           <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.6rem;">
-            <span style="font-weight:600; font-size:.9rem;">Candidati da includere</span>
+            <span style="font-weight:600; font-size:.9rem;">Candidates to include</span>
             <div style="display:flex; gap:.3rem; margin-left:auto;">
-              <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('all')">Tutti</button>
+              <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('all')">All</button>
               <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('non-rejected')">Non rifiutati</button>
               <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="magiFilter('approved')">Solo approvati</button>
             </div>
@@ -330,7 +330,7 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
             </table>
           </div>
           <div style="font-size:.75rem; color:var(--ts-text-muted); margin-top:.3rem;">
-            Solo i candidati con SFS calcolato contribuiranno al ranking.
+            Only candidates with computed SFS will contribute to the ranking.
           </div>
         </div>
 
@@ -339,12 +339,12 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
           {% if magi_status and magi_status.active_count == 3 %}
           <label style="display:flex; align-items:center; gap:.6rem; cursor:pointer; font-weight:600; font-size:.9rem; margin-bottom:.6rem;">
             <input type="checkbox" id="run-phase2-toggle" name="run_phase2" value="1" onchange="togglePhase2(this)">
-            Esegui Phase 2 — Panel dei giudici
+            Run Phase 2 — Judge panel
           </label>
           <div id="phase2-section" style="display:none; padding:.75rem; background:var(--ts-surface-2); border-radius:var(--ts-radius); border:1px solid var(--ts-border);">
             <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.6rem;">
-              Ogni giudice valuta indipendentemente i candidati (semantic fidelity, register match, naturalness 1–5).
-              Il consensus è la media dei punteggi; ↯ segnala disaccordo (stdev &gt; 0.15).
+              Each judge independently evaluates candidates (semantic fidelity, register match, naturalness 1–5).
+              Consensus is the average of scores; ↯ signals disagreement (stdev &gt; 0.15).
             </p>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:.5rem; margin-bottom:.75rem;">
               {% for j in magi_status.judges %}
@@ -357,21 +357,21 @@ Score: {{ "%.4f"|format(j.score) if j.score is not none else "—" }}{% if attem
             </div>
             <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer; font-size:.82rem;">
               <input type="checkbox" name="force_magi" value="1">
-              Forza Phase 2 su tutti i candidati (non solo quelli con MAGI? = sì)
+              Force Phase 2 on all candidates (not only those with MAGI? = yes)
             </label>
           </div>
           {% else %}
           <div style="padding:.6rem .75rem; background:var(--ts-surface-2); border-radius:var(--ts-radius); border:1px solid var(--ts-border); font-size:.82rem; color:var(--ts-text-muted);">
-            <strong style="color:var(--ts-warning);">Phase 2 non disponibile</strong>
+            <strong style="color:var(--ts-warning);">Phase 2 unavailable</strong>
             {% if magi_status %}— {{ magi_status.tooltip }}.{% endif %}
-            Configura i 3 giudici in <a href="/settings" style="color:var(--ts-accent);">Impostazioni →</a>
+            Configure the 3 judges in <a href="/settings" style="color:var(--ts-accent);">Settings →</a>
           </div>
           {% endif %}
         </div>
 
       </div><!-- modal-body -->
       <div class="ts-modal-footer" style="display:flex; justify-content:flex-end; gap:.5rem; padding:1rem 1.5rem; border-top:1px solid var(--ts-border);">
-        <button type="button" class="ts-btn ts-btn-secondary" onclick="closeMAGIModal()">Annulla</button>
+        <button type="button" class="ts-btn ts-btn-secondary" onclick="closeMAGIModal()">Cancel</button>
         <button type="submit" class="ts-btn ts-btn-primary" onclick="magiUpdateIds()" data-loading="Calcolo in corso…">Calcola MAGI Scores</button>
       </div>
     </form>

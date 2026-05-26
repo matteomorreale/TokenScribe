@@ -29,7 +29,7 @@
         <option value="standard" {% if not prompt or prompt.analysis_type == 'standard' %}selected{% endif %}>Standard</option>
         <option value="tsf" {% if prompt and prompt.analysis_type == 'tsf' %}selected{% endif %}>TSF — Translation Strategy Fingerprint</option>
       </select>
-      <div class="ts-input-hint">TSF prompts attivano la classificazione post-run {keep_latin, transliterate, translate_semantic, mistranslate} su ogni cella tramite panel MAGI a 3 giudici.</div>
+      <div class="ts-input-hint">TSF prompts activate post-run classification {keep_latin, transliterate, translate_semantic, mistranslate} on each cell via the 3-judge MAGI panel.</div>
     </div>
     <div class="ts-form-group">
       <label class="ts-label" for="base_text">
@@ -51,8 +51,8 @@
       <label class="ts-label" for="notes">Notes</label>
       <textarea class="ts-textarea" id="notes" name="notes"
                 style="min-height:100px;"
-                placeholder="Decisioni sulle traduzioni, osservazioni metodologiche, contesto…">{{ prompt.notes if prompt else '' }}</textarea>
-      <div class="ts-input-hint">Queste note vengono incluse nei JSON delle esportazioni delle RUN che usano questo prompt.</div>
+                placeholder="Translation decisions, methodological notes, context…">{{ prompt.notes if prompt else '' }}</textarea>
+      <div class="ts-input-hint">These notes are included in the JSON exports of RUN experiments that use this prompt.</div>
     </div>
     <div style="display:flex; gap:.75rem; margin-top:1.5rem;">
       <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">

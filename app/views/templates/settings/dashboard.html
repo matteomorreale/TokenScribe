@@ -162,7 +162,7 @@
           {% endfor %}
         </select>
         {% if magi_judge_ids[loop_idx] %}
-        <div class="ts-input-hint" style="color:var(--ts-success);">✓ Configurato</div>
+        <div class="ts-input-hint" style="color:var(--ts-success);">✓ Configured</div>
         {% else %}
         <div class="ts-input-hint" style="color:var(--ts-error);">✗ Non configurato</div>
         {% endif %}
@@ -170,11 +170,11 @@
       {% endfor %}
     </div>
     <p style="font-size:.78rem; color:var(--ts-text-muted); margin:.85rem 0 1rem;">
-      Questi modelli vengono usati esclusivamente per la valutazione qualitativa pre-run (MAGI Phase 2).
-      Si consiglia di scegliere modelli non inclusi nelle run sperimentali.
-      I modelli marcati con ✗ appartengono a provider senza API key configurata.
+      These models are used exclusively for qualitative pre-run evaluation (MAGI Phase 2).
+      It is recommended to choose models not included in experimental runs.
+      Models marked with ✗ belong to providers with no configured API key.
     </p>
-    <button type="submit" class="ts-btn ts-btn-primary">Salva MAGI Judge Panel</button>
+    <button type="submit" class="ts-btn ts-btn-primary">Save MAGI Judge Panel</button>
   </form>
 </div>
 

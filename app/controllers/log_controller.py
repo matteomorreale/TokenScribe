@@ -53,7 +53,7 @@ def log_clear():
     """Delete all log entries."""
     lm = _lm()
     deleted = lm.delete_all()
-    flash(f"Log azzerato: {deleted} voci eliminate.", "success")
+    flash(f"Log cleared: {deleted} entries deleted.", "success")
     return redirect(url_for("log.log_list"))
 
 

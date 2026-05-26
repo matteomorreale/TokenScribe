@@ -158,22 +158,22 @@
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header">
     <span class="ts-card-title">Bulk Translate</span>
-    <span style="font-size:.78rem; color:var(--ts-text-muted);">Genera traduzioni AI per più prompt in una sola operazione</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">Generate AI translations for multiple prompts in one operation</span>
   </div>
   <form method="post" action="{{ url_for('study.bulk_translate', study_id=study.id) }}" id="bulk-translate-form">
 
     <!-- Prompt selection -->
     <p style="font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.6rem;">
-      Seleziona i prompt da tradurre (lascia tutto deselezionato per tradurre tutti).
+      Select the prompts to translate (leave all unchecked to translate all).
     </p>
     <div class="ts-table-wrap" style="margin-bottom:1rem;">
       <table class="ts-table" style="font-size:.78rem;">
         <thead>
           <tr>
-            <th style="width:2rem;"><input type="checkbox" id="bt-select-all" title="Seleziona tutti"></th>
+            <th style="width:2rem;"><input type="checkbox" id="bt-select-all" title="Select all"></th>
             <th>#</th>
             <th>Base Text</th>
-            <th style="text-align:center;">Traduzioni</th>
+            <th style="text-align:center;">Translations</th>
           </tr>
         </thead>
         <tbody>
@@ -194,7 +194,7 @@
     <!-- Language + config grid -->
     <div class="ts-grid ts-grid-2" style="align-items:start; margin-bottom:1rem;">
       <div>
-        <label class="ts-label">Lingue target</label>
+        <label class="ts-label">Target languages</label>
         <div style="display:flex; flex-wrap:wrap; gap:.4rem; margin:.3rem 0 .6rem;">
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Alphabetic">Alphabetic</button>
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-bt-preset-key="writingSystem" data-bt-preset-value="Abjad">Abjad</button>
@@ -216,7 +216,7 @@
             {% endif %}
           {% endfor %}
         </select>
-        <div class="ts-input-hint">Selezione multipla: ⌘/Ctrl + click</div>
+        <div class="ts-input-hint">Multiple selection: ⌘/Ctrl + click</div>
       </div>
       <div>
         <div class="ts-form-group" style="margin-bottom:.65rem;">
@@ -224,40 +224,40 @@
           <input id="bulk_sfs_min" name="bulk_sfs_min" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.92" required>
         </div>
         <div class="ts-form-group" style="margin-bottom:.65rem;">
-          <label class="ts-label" for="bulk_candidates_per_lang">Candidati per lingua</label>
+          <label class="ts-label" for="bulk_candidates_per_lang">Candidates per language</label>
           <input id="bulk_candidates_per_lang" name="bulk_candidates_per_lang" type="number" class="ts-input" min="1" max="5" value="2" required>
         </div>
         <div class="ts-form-group" style="margin-bottom:.85rem;">
-          <label class="ts-label" for="bulk_pei_profile">Profilo PEI</label>
+          <label class="ts-label" for="bulk_pei_profile">PEI Profile</label>
           <select id="bulk_pei_profile" name="bulk_pei_profile" class="ts-select" required>
-            <option value="homogeneous" selected>Omogeneo — PEI &lt; 0.20</option>
-            <option value="moderate">Moderato — PEI 0.20–0.35</option>
-            <option value="cross_script">Cross-script — PEI &gt; 0.35 accettabile</option>
+            <option value="homogeneous" selected>Homogeneous — PEI &lt; 0.20</option>
+            <option value="moderate">Moderate — PEI 0.20–0.35</option>
+            <option value="cross_script">Cross-script — PEI &gt; 0.35 acceptable</option>
           </select>
         </div>
         <div style="border-top:1px solid var(--ts-border); padding-top:.75rem; display:flex; flex-direction:column; gap:.5rem;">
           <label style="display:flex; align-items:center; gap:.5rem; font-size:.82rem; cursor:pointer;">
             <input type="checkbox" name="bulk_run_magi" value="1" id="bulk_run_magi"{% if not judges_ok %} title="Configura i 3 judge MAGI in Settings per abilitare Phase 2"{% endif %}>
             <span>Run MAGI Phase 1</span>
-            <span style="color:var(--ts-text-muted); font-size:.75rem;">+ Phase 2 se judges configurati</span>
+            <span style="color:var(--ts-text-muted); font-size:.75rem;">+ Phase 2 if judges configured</span>
           </label>
           <label style="display:flex; align-items:center; gap:.5rem; font-size:.82rem; cursor:pointer;" id="bt-phase2-label" style="display:none;">
             <input type="checkbox" name="bulk_run_phase2" value="1" id="bulk_run_phase2"{% if not judges_ok %} disabled{% endif %}>
             <span>Run MAGI Phase 2 (judge panel)</span>
-            {% if not judges_ok %}<span class="ts-badge ts-badge-warning" style="font-size:.7rem;">judges non configurati</span>{% endif %}
+            {% if not judges_ok %}<span class="ts-badge ts-badge-warning" style="font-size:.7rem;">judges not configured</span>{% endif %}
           </label>
           <label style="display:flex; align-items:center; gap:.5rem; font-size:.82rem; cursor:pointer;">
             <input type="checkbox" name="bulk_auto_approve" value="1">
-            <span>Auto-approva il miglior candidato per lingua</span>
-            <span style="color:var(--ts-text-muted); font-size:.75rem;">(score MAGI se attivo, altrimenti SFS)</span>
+            <span>Auto-approve the best candidate per language</span>
+            <span style="color:var(--ts-text-muted); font-size:.75rem;">(MAGI score if active, otherwise SFS)</span>
           </label>
         </div>
       </div>
     </div>
 
     <div style="display:flex; gap:.75rem; align-items:center;">
-      <button type="submit" class="ts-btn ts-btn-primary" data-loading="Avvio in corso…">Avvia Bulk Translate</button>
-      <span style="font-size:.78rem; color:var(--ts-text-muted);">Il processo gira in background — la pagina si aggiornerà al termine.</span>
+      <button type="submit" class="ts-btn ts-btn-primary" data-loading="Starting…">Start Bulk Translate</button>
+      <span style="font-size:.78rem; color:var(--ts-text-muted);">The process runs in background — the page will refresh when done.</span>
     </div>
   </form>
 </div>
@@ -266,14 +266,14 @@
 <!-- MAGI Repair Progress (shown when a repair run is active) -->
 <div id="magi-repair-card" class="ts-card" style="display:none; margin-bottom:1.25rem;">
   <div class="ts-card-header" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
-    <span class="ts-card-title">MAGI Repair in corso</span>
+    <span class="ts-card-title">MAGI Repair in progress</span>
     <span id="magi-repair-badge"></span>
     <span id="magi-repair-run-label" style="font-size:.8rem; color:var(--ts-text-muted);"></span>
     <span id="magi-repair-progress-text" style="font-size:.82rem; color:var(--ts-text-muted);"></span>
-    <span style="font-size:.78rem; color:var(--ts-text-muted);">aggiornamento live ogni 3s</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">live update every 3s</span>
     <form id="magi-stop-form" method="post" action="#" style="margin-left:auto; display:none;">
       <button type="submit" class="ts-btn ts-btn-sm ts-btn-danger"
-              onclick="return confirm('Fermare la MAGI repair run?')">⏹ Stop</button>
+              onclick="return confirm('Stop the MAGI repair run?')">⏹ Stop</button>
     </form>
   </div>
   <div style="padding:.25rem 1.25rem .75rem;">
@@ -294,8 +294,8 @@
   </div>
   {% if not judges_ok %}
   <div style="background:rgba(249,199,79,.06); border:1px solid rgba(249,199,79,.3); border-radius:6px; padding:.6rem .85rem; margin-bottom:.85rem; font-size:.8rem; color:var(--ts-warning);">
-    ⚠ MAGI Judge Panel non configurato — Phase 2 verrà saltata.
-    <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning); text-decoration:underline;">Configura in Settings →</a>
+    ⚠ MAGI Judge Panel not configured — Phase 2 will be skipped.
+    <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning); text-decoration:underline;">Configure in Settings →</a>
   </div>
   {% endif %}
   <form method="post" action="{{ url_for('study.regen_magi', study_id=study.id) }}">
@@ -446,7 +446,7 @@ document.getElementById('bt-select-all')?.addEventListener('change', function() 
       }
       btWasActive = true;
       if (btCard) btCard.style.display = '';
-      btProg.textContent = `${data.done}/${data.total} prompt completati`;
+      btProg.textContent = `${data.done}/${data.total} prompts completed`;
       btStep.textContent = data.current_prompt_text
         ? `${STEP_LABELS[data.current_step] || data.current_step} — "${data.current_prompt_text}…"`
         : '';
@@ -500,11 +500,11 @@ document.getElementById('bt-select-all')?.addEventListener('change', function() 
       badge.innerHTML = BADGE[data.run_status] || '';
       label.textContent = `Run #${data.run_id}`;
       const errTxt = p.error > 0 ? ` — ${p.error} err` : '';
-      const canTxt = p.cancelled > 0 ? ` — ${p.cancelled} annullate` : '';
-      ptext.textContent = `${p.done}/${p.total} completati${errTxt}${canTxt}`;
+      const canTxt = p.cancelled > 0 ? ` — ${p.cancelled} cancelled` : '';
+      ptext.textContent = `${p.done}/${p.total} completed${errTxt}${canTxt}`;
       bar.style.width = (p.pct || 0) + '%';
 
-      // Mostra bottone stop solo quando la run è attivamente in lavorazione
+      // Show stop button only when the run is actively being processed
       if (stopForm) {
         stopForm.action = `/experiments/${data.run_id}/stop`;
         stopForm.style.display = ['queued', 'running'].includes(data.run_status) ? '' : 'none';

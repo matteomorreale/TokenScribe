@@ -19,35 +19,35 @@
 </div>
 <details class="ts-card" style="margin-bottom:1rem;">
   <summary style="cursor:pointer; padding:.75rem 1rem; font-weight:600; list-style:none; display:flex; align-items:center; gap:.5rem;">
-    <span>Migrazione delimitatori</span>
+    <span>Delimiter migration</span>
     <span class="ts-badge ts-badge-accent" style="font-weight:400; font-size:.75rem;">bulk</span>
   </summary>
   <div style="padding:.75rem 1rem 1rem;">
     <p style="font-size:.85rem; color:var(--ts-text-muted); margin-bottom:.75rem;">
-      Sostituisce i delimitatori in tutti i prompt del database in un colpo solo.
-      I valori predefiniti sostituiscono il vecchio formato <code>&lt;&lt;&lt; &gt;&gt;&gt;</code> con <code>&lt;input&gt; &lt;/input&gt;</code>.
+      Replaces delimiters in all prompts in the database at once.
+      The default values replace the old format <code>&lt;&lt;&lt; &gt;&gt;&gt;</code> with <code>&lt;input&gt; &lt;/input&gt;</code>.
     </p>
     <form method="post" action="{{ url_for('prompt.migrate_delimiters') }}"
-          data-confirm="Aggiornare tutti i prompt con i nuovi delimitatori?">
+          data-confirm="Update all prompts with the new delimiters?">
       <div style="display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end;">
         <label style="font-size:.82rem;">
-          Apre (vecchio)
+          Open (old)
           <input name="old_open" value="&lt;&lt;&lt;" class="ts-input" style="width:8rem; margin-top:.25rem; display:block;">
         </label>
         <label style="font-size:.82rem;">
-          Chiude (vecchio)
+          Close (old)
           <input name="old_close" value="&gt;&gt;&gt;" class="ts-input" style="width:8rem; margin-top:.25rem; display:block;">
         </label>
         <span style="padding-bottom:.35rem; color:var(--ts-text-muted);">→</span>
         <label style="font-size:.82rem;">
-          Apre (nuovo)
+          Open (new)
           <input name="new_open" value="&lt;input&gt;" class="ts-input" style="width:8rem; margin-top:.25rem; display:block;">
         </label>
         <label style="font-size:.82rem;">
-          Chiude (nuovo)
+          Close (new)
           <input name="new_close" value="&lt;/input&gt;" class="ts-input" style="width:8rem; margin-top:.25rem; display:block;">
         </label>
-        <button type="submit" class="ts-btn ts-btn-secondary" style="margin-bottom:.05rem;">Esegui migrazione</button>
+        <button type="submit" class="ts-btn ts-btn-secondary" style="margin-bottom:.05rem;">Run migration</button>
       </div>
     </form>
   </div>

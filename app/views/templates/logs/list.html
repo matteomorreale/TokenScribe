@@ -104,14 +104,14 @@
 {% endblock %}
 
 {% block topbar_actions %}
-<label class="auto-refresh-toggle" title="Auto-aggiorna ogni 5 secondi">
+<label class="auto-refresh-toggle" title="Auto-refresh every 5 seconds">
   <input type="checkbox" id="auto-refresh-cb">
   Auto-refresh
   <span id="refresh-indicator"></span>
 </label>
 <form method="POST" action="{{ url_for('log.log_clear') }}"
-      onsubmit="return confirm('Eliminare tutti i log?');" style="display:inline;">
-  <button class="ts-btn ts-btn-ghost ts-btn-sm" style="color:#f87171;">Azzera log</button>
+      onsubmit="return confirm('Delete all logs?');" style="display:inline;">
+  <button class="ts-btn ts-btn-ghost ts-btn-sm" style="color:#f87171;">Clear logs</button>
 </form>
 {% endblock %}
 
@@ -119,13 +119,13 @@
 <div class="ts-page-header">
   <div>
     <h1 class="ts-page-title">Operation Logs</h1>
-    <p class="ts-page-subtitle">Tutte le operazioni AI: esperimenti, MAGI, traduzioni</p>
+    <p class="ts-page-subtitle">All AI operations: experiments, MAGI, translations</p>
   </div>
 </div>
 
 <!-- Stats bar -->
 <div class="log-stats">
-  <div class="log-stat-card"><strong>{{ stats.total }}</strong> totale</div>
+  <div class="log-stat-card"><strong>{{ stats.total }}</strong> total</div>
   {% for lvl, cnt in stats.by_level.items() %}
   <div class="log-stat-card"><span class="lvl lvl-{{ lvl }}">{{ lvl }}</span> <strong>{{ cnt }}</strong></div>
   {% endfor %}
@@ -140,39 +140,39 @@
 <!-- Filter toolbar -->
 <form method="GET" action="{{ url_for('log.log_list') }}" class="log-toolbar" id="filter-form">
   <select name="operation_type" onchange="this.form.submit()">
-    <option value="">Tutti i tipi</option>
+    <option value="">All types</option>
     {% for t in distinct.operation_types %}
     <option value="{{ t }}" {% if filters.operation_type == t %}selected{% endif %}>{{ t }}</option>
     {% endfor %}
   </select>
   <select name="level" onchange="this.form.submit()">
-    <option value="">Tutti i livelli</option>
+    <option value="">All levels</option>
     {% for l in distinct.levels %}
     <option value="{{ l }}" {% if filters.level == l %}selected{% endif %}>{{ l }}</option>
     {% endfor %}
   </select>
   <select name="provider" onchange="this.form.submit()">
-    <option value="">Tutti i provider</option>
+    <option value="">All providers</option>
     {% for p in distinct.providers %}
     <option value="{{ p }}" {% if filters.provider == p %}selected{% endif %}>{{ p }}</option>
     {% endfor %}
   </select>
   <select name="model" onchange="this.form.submit()">
-    <option value="">Tutti i modelli</option>
+    <option value="">All models</option>
     {% for m in distinct.models %}
     <option value="{{ m }}" {% if filters.model == m %}selected{% endif %}>{{ m }}</option>
     {% endfor %}
   </select>
-  <input type="text" name="search" placeholder="Cerca in message / payload…"
+  <input type="text" name="search" placeholder="Search in message / payload…"
          value="{{ filters.search or '' }}"
          style="min-width:200px;">
-  <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Filtra</button>
+  <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Filter</button>
   {% if filters.operation_type or filters.level or filters.provider or filters.model or filters.search %}
-  <a href="{{ url_for('log.log_list') }}" class="ts-btn ts-btn-ghost ts-btn-sm">Azzera filtri</a>
+  <a href="{{ url_for('log.log_list') }}" class="ts-btn ts-btn-ghost ts-btn-sm">Clear filters</a>
   {% endif %}
 
   <span style="margin-left:auto; color:var(--text-muted); font-size:.82rem;">
-    {{ total }} righe{% if total > page_size %} (mostrate {{ page_size }}){% endif %}
+    {{ total }} rows{% if total > page_size %} (showing {{ page_size }}){% endif %}
   </span>
 </form>
 
@@ -183,13 +183,13 @@
       <tr>
         <th>#</th>
         <th>Timestamp</th>
-        <th>Livello</th>
-        <th>Tipo</th>
-        <th>Evento</th>
-        <th>Provider / Modello</th>
-        <th>Messaggio</th>
-        <th>Durata</th>
-        <th>Contesto / Payload</th>
+        <th>Level</th>
+        <th>Type</th>
+        <th>Event</th>
+        <th>Provider / Model</th>
+        <th>Message</th>
+        <th>Duration</th>
+        <th>Context / Payload</th>
       </tr>
     </thead>
     <tbody id="log-tbody">
@@ -198,7 +198,7 @@
         {{ _render_row(entry) }}
         {% endfor %}
       {% else %}
-      <tr><td colspan="9" class="log-empty">Nessun log trovato con i filtri attuali.</td></tr>
+      <tr><td colspan="9" class="log-empty">No logs found with the current filters.</td></tr>
       {% endif %}
     </tbody>
   </table>
@@ -206,7 +206,7 @@
 
 {% if total > page_size %}
 <p style="margin-top:.75rem; color:var(--text-muted); font-size:.82rem; text-align:center;">
-  Visualizzate le {{ page_size }} voci più recenti. Usa i filtri per restringere la ricerca.
+  Showing the {{ page_size }} most recent entries. Use filters to narrow the search.
 </p>
 {% endif %}
 {% endblock %}
@@ -300,7 +300,7 @@ async function refreshLogs() {
     const data = await resp.json();
     const tbody = document.getElementById('log-tbody');
     if (!data.logs || data.logs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="log-empty">Nessun log trovato.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="log-empty">No logs found.</td></tr>';
       return;
     }
     tbody.innerHTML = data.logs.map(renderRow).join('');

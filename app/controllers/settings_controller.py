@@ -182,7 +182,7 @@ def save_magi_judges():
         if val:
             data[key] = val
     stm.set_many(data)
-    flash("MAGI Judge Panel aggiornato.", "success")
+    flash("MAGI Judge Panel updated.", "success")
     return redirect(url_for("settings.settings_dashboard"))
 
 

@@ -36,10 +36,10 @@
   </div>
   <form method="post" action="{{ url_for('prompt.update_notes', prompt_id=prompt.id) }}">
     <textarea class="ts-textarea" name="notes" style="min-height:100px; margin-bottom:.75rem;"
-              placeholder="Decisioni sulle traduzioni, osservazioni metodologiche, contesto…">{{ prompt.notes or '' }}</textarea>
+              placeholder="Translation decisions, methodological notes, context…">{{ prompt.notes or '' }}</textarea>
     <div style="display:flex; align-items:center; gap:.75rem;">
       <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Save Notes</button>
-      <span class="ts-input-hint" style="margin:0;">Incluse nei JSON delle esportazioni delle RUN.</span>
+      <span class="ts-input-hint" style="margin:0;">Included in the JSON exports of RUN experiments.</span>
     </div>
   </form>
 </div>
@@ -74,17 +74,17 @@
     <span style="font-size:1rem;">⚡</span>
     <div style="flex:1;">
       {% if pending_count > 0 %}
-      <strong style="font-size:.9rem;">{{ pending_count }} traduzione/i in attesa di approvazione</strong>
-      <p style="margin:.2rem 0 0; font-size:.8rem; color:var(--ts-text-muted);">Una volta approvate le traduzioni migliori, avvia il MAGI System per calcolare i punteggi di selezione e il panel di giudici.</p>
+      <strong style="font-size:.9rem;">{{ pending_count }} translation(s) awaiting approval</strong>
+      <p style="margin:.2rem 0 0; font-size:.8rem; color:var(--ts-text-muted);">Once the best translations are approved, launch the MAGI System to compute selection scores and the judge panel.</p>
       {% elif (r.get('approved_count', 0) if r else 0) > 0 and (r.get('magi_count', 0) if r else 0) == 0 %}
-      <strong style="font-size:.9rem;">MAGI Phase 1 non ancora eseguita</strong>
-      <p style="margin:.2rem 0 0; font-size:.8rem; color:var(--ts-text-muted);">Hai traduzioni approvate ma i punteggi MAGI non sono stati ancora calcolati. Avvia il MAGI System.</p>
+      <strong style="font-size:.9rem;">MAGI Phase 1 not yet run</strong>
+      <p style="margin:.2rem 0 0; font-size:.8rem; color:var(--ts-text-muted);">You have approved translations but MAGI scores have not been computed yet. Launch the MAGI System.</p>
       {% else %}
-      <strong style="font-size:.9rem;">{{ r.get('magi_required_count', 0) if r else 0 }} candidato/i richiede/ono il panel di giudici</strong>
-      <p style="margin:.2rem 0 0; font-size:.8rem; color:var(--ts-text-muted);">Il MAGI Phase 1 ha identificato candidati da sottoporre ai giudici LLM (Phase 2).</p>
+      <strong style="font-size:.9rem;">{{ r.get('magi_required_count', 0) if r else 0 }} candidate(s) require the judge panel</strong>
+      <p style="margin:.2rem 0 0; font-size:.8rem; color:var(--ts-text-muted);">MAGI Phase 1 identified candidates to submit to the LLM judges (Phase 2).</p>
       {% endif %}
     </div>
-    <a href="{{ url_for('translation.list_translations', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary ts-btn-sm" style="white-space:nowrap;">Avvia MAGI System →</a>
+    <a href="{{ url_for('translation.list_translations', prompt_id=prompt.id) }}" class="ts-btn ts-btn-primary ts-btn-sm" style="white-space:nowrap;">Launch MAGI System →</a>
   </div>
 </div>
 {% endif %}
@@ -96,7 +96,7 @@
   <form method="post" action="{{ url_for('translation.ai_translate', prompt_id=prompt.id) }}">
     <div class="ts-grid ts-grid-2" style="align-items:start;">
       <div>
-        <label class="ts-label" for="language_ids">Lingue target</label>
+        <label class="ts-label" for="language_ids">Target languages</label>
         <div style="display:flex; flex-wrap:wrap; gap:.4rem; margin:.35rem 0 .6rem 0;">
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Alphabetic">Alphabetic</button>
           <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" data-ts-lang-preset-key="writingSystem" data-ts-lang-preset-value="Abjad">Abjad</button>
@@ -118,29 +118,29 @@
             {% endif %}
           {% endfor %}
         </select>
-        <div class="ts-input-hint">Selezione multipla: ⌘/Ctrl + click</div>
+        <div class="ts-input-hint">Multiple selection: ⌘/Ctrl + click</div>
       </div>
       <div>
         <div class="ts-form-group" style="margin-bottom:0;">
-          <label class="ts-label" for="sfs_min">SFS minimo</label>
+          <label class="ts-label" for="sfs_min">Minimum SFS</label>
           <input id="sfs_min" name="sfs_min" type="number" class="ts-input" min="0" max="1" step="0.0001" value="0.92" required>
         </div>
         <div class="ts-form-group" style="margin-top:.65rem; margin-bottom:0;">
-          <label class="ts-label" for="candidates_per_lang">Traduzioni per lingua</label>
+          <label class="ts-label" for="candidates_per_lang">Translations per language</label>
           <input id="candidates_per_lang" name="candidates_per_lang" type="number" class="ts-input" min="1" max="5" value="2" required>
-          <div class="ts-input-hint" style="margin-top:.25rem;">Numero di candidati generati per lingua per ogni round di ottimizzazione (1–5, default 2). Valori più alti aumentano la qualità ma anche il costo.</div>
+          <div class="ts-input-hint" style="margin-top:.25rem;">Number of candidates generated per language per optimization round (1–5, default 2). Higher values improve quality but increase cost.</div>
         </div>
         <div class="ts-form-group" style="margin-top:.65rem; margin-bottom:0;">
-          <label class="ts-label" for="pei_profile">Profilo PEI (set del prompt)</label>
+          <label class="ts-label" for="pei_profile">PEI Profile (prompt set)</label>
           <select id="pei_profile" name="pei_profile" class="ts-select" required>
-            <option value="homogeneous" selected>Omogeneo — PEI &lt; 0.20 ottimo</option>
-            <option value="moderate">Moderatamente eterogeneo — PEI 0.20–0.35 plausibile</option>
-            <option value="cross_script">Cross-script — PEI &gt; 0.35 possibile (non auto-invalido)</option>
+            <option value="homogeneous" selected>Homogeneous — PEI &lt; 0.20 excellent</option>
+            <option value="moderate">Moderately heterogeneous — PEI 0.20–0.35 plausible</option>
+            <option value="cross_script">Cross-script — PEI &gt; 0.35 possible (not auto-rejected)</option>
           </select>
         </div>
-        <div class="ts-input-hint">SFS è per singola traduzione; PEI è per l'intero set multilingua. Range: &lt;0.20 ottimo, 0.20–0.35 plausibile, &gt;0.35 alto (accettabile se cross-script).</div>
+        <div class="ts-input-hint">SFS is per single translation; PEI is for the entire multilingual set. Range: &lt;0.20 excellent, 0.20–0.35 plausible, &gt;0.35 high (acceptable if cross-script).</div>
         <div style="display:flex; justify-content:flex-end; margin-top:1rem;">
-          <button class="ts-btn ts-btn-primary" data-loading="Generazione in corso…">Genera traduzioni</button>
+          <button class="ts-btn ts-btn-primary" data-loading="Generating…">Generate translations</button>
         </div>
       </div>
     </div>
@@ -153,30 +153,30 @@
     <span class="ts-badge ts-badge-info">{{ pei_count }} traduzioni incluse</span>
     <span class="ts-badge ts-badge-secondary">{{ pei_band }}</span>
     {% if pei_stale %}
-    <span class="ts-badge ts-badge-warning" title="Le traduzioni approvate sono cambiate dopo l'ultimo salvataggio PEI — il valore qui sopra è live, ma lo snapshot usato da MAGI potrebbe essere obsoleto.">
+    <span class="ts-badge ts-badge-warning" title="Approved translations have changed since the last PEI save — the value above is live, but the snapshot used by MAGI may be stale.">
       &#9888; PEI non confermato
     </span>
     {% else %}
-    <span class="ts-badge ts-badge-approved" title="PEI salvato il {{ pei_saved_at }}">&#10003; PEI aggiornato</span>
+    <span class="ts-badge ts-badge-approved" title="PEI saved on {{ pei_saved_at }}">&#10003; PEI up to date</span>
     {% endif %}
     <form method="post" action="{{ url_for('prompt.refresh_pei', prompt_id=prompt.id) }}" style="margin-left:auto;">
       <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit"{% if not pei_stale %} style="opacity:.6;"{% endif %}>
-        &#8635; Aggiorna PEI
+        &#8635; Refresh PEI
       </button>
     </form>
   </div>
   {% if pei_stale %}
   <p style="font-size:.8rem; color:var(--ts-warning); margin:.2rem 0 .6rem 0;">
-    Le traduzioni approvate sono cambiate{% if pei_saved_at %} dopo l'ultimo salvataggio ({{ pei_saved_at[:16] }}){% endif %}.
-    Il PEI mostrato è calcolato live dalla lista corrente.
-    Clicca <strong>Aggiorna PEI</strong> per confermare il riferimento usato da MAGI.
+    Approved translations have changed{% if pei_saved_at %} since the last save ({{ pei_saved_at[:16] }}){% endif %}.
+    The PEI shown is computed live from the current list.
+    Click <strong>Refresh PEI</strong> to confirm the reference used by MAGI.
   </p>
   {% endif %}
   <div class="ts-grid ts-grid-4">
     <div class="ts-stat-card">
       <div class="ts-stat-label">PEI</div>
       <div class="ts-stat-value">{{ "%.4f"|format(pei.pei) }}</div>
-      <div class="ts-stat-sub">più basso = più bilanciate</div>
+      <div class="ts-stat-sub">lower = more balanced</div>
     </div>
     <div class="ts-stat-card">
       <div class="ts-stat-label">CV caratteri</div>
@@ -198,7 +198,7 @@
 
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header">
-    <span class="ts-card-title">PEI per sottogruppi</span>
+    <span class="ts-card-title">PEI by subgroups</span>
   </div>
   <div class="ts-grid ts-grid-2">
     <div>
@@ -208,8 +208,8 @@
         <table class="ts-table">
           <thead>
             <tr>
-              <th>Gruppo</th>
-              <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviazione dal PEI globale del prompt">Δ vs globale ★</th>
+              <th>Group</th>
+              <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviation from the prompt's global PEI">Δ vs global ★</th>
               <th>PEI</th><th>Band</th>
             </tr>
           </thead>
@@ -230,7 +230,7 @@
         </table>
       </div>
       {% else %}
-      <div class="ts-input-hint">Servono ≥2 lingue nello stesso gruppo per calcolare il PEI di sottogruppo.</div>
+      <div class="ts-input-hint">At least 2 languages in the same group are needed to compute the subgroup PEI.</div>
       {% endif %}
     </div>
     <div>
@@ -240,8 +240,8 @@
         <table class="ts-table">
           <thead>
             <tr>
-              <th>Gruppo</th>
-              <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviazione dal PEI globale del prompt">Δ vs globale ★</th>
+              <th>Group</th>
+              <th style="color:var(--ts-accent); font-weight:700;" title="Primary KPI — deviation from the prompt's global PEI">Δ vs global ★</th>
               <th>PEI</th><th>Band</th>
             </tr>
           </thead>
@@ -262,7 +262,7 @@
         </table>
       </div>
       {% else %}
-      <div class="ts-input-hint">Assegna morphology_group alle lingue per abilitare questi sottogruppi.</div>
+      <div class="ts-input-hint">Assign morphology_group to languages to enable these subgroups.</div>
       {% endif %}
     </div>
   </div>
@@ -370,7 +370,7 @@
                       <div style="font-variant-numeric: tabular-nums;">{{ "%.4f"|format(pei.pei) }}</div>
                     </div>
                     <div>
-                      <div class="ts-stat-label" style="margin-bottom:.15rem;">PEI con questa</div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">PEI with this</div>
                       <div style="font-variant-numeric: tabular-nums;">
                         {% if c.pei_with_candidate is not none %}{{ "%.4f"|format(c.pei_with_candidate) }}{% else %}—{% endif %}
                         {% if c.pei_delta is not none %}
@@ -397,20 +397,20 @@
                       </div>
                     </div>
                     <div>
-                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV char (con questa)</div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV char (with this)</div>
                       <div style="font-variant-numeric: tabular-nums;">{% if c.pei_with_cv_char_length is not none %}{{ "%.4f"|format(c.pei_with_cv_char_length) }}{% else %}—{% endif %}</div>
                     </div>
                     <div>
-                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV words (con questa)</div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV words (with this)</div>
                       <div style="font-variant-numeric: tabular-nums;">{% if c.pei_with_cv_word_count is not none %}{{ "%.4f"|format(c.pei_with_cv_word_count) }}{% else %}—{% endif %}</div>
                     </div>
                     <div>
-                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV tokens (con questa)</div>
+                      <div class="ts-stat-label" style="margin-bottom:.15rem;">CV tokens (with this)</div>
                       <div style="font-variant-numeric: tabular-nums;">{% if c.pei_with_cv_token_count is not none %}{{ "%.4f"|format(c.pei_with_cv_token_count) }}{% else %}—{% endif %}</div>
                     </div>
                     <div>
                       <div class="ts-stat-label" style="margin-bottom:.15rem;">PEI note</div>
-                      <div style="color: var(--ts-text-muted); font-size:.82rem;">CV = std/mean; PEI = media dei CV</div>
+                      <div style="color: var(--ts-text-muted); font-size:.82rem;">CV = std/mean; PEI = average of CVs</div>
                     </div>
                   </div>
                 </div>

@@ -88,7 +88,7 @@
   <div class="ts-card-header">
     <span class="ts-card-title">PEI per Prompt</span>
     <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:.75rem;">
-      KPI primario: <strong style="color:var(--ts-accent);">Δ vs baseline</strong> nei sottogruppi — il valore assoluto PEI è poco discriminante
+      Primary KPI: <strong style="color:var(--ts-accent);">Δ vs baseline</strong> in subgroups — the absolute PEI value is not very discriminating
     </span>
   </div>
   <div style="display:flex; flex-direction:column; gap:.6rem;">
@@ -117,7 +117,7 @@
       {% if max_delta.val is not none %}
       <span style="font-size:.78rem; font-variant-numeric:tabular-nums; font-weight:600;
                    color:{% if max_delta.val < -0.001 %}var(--ts-success,#22c55e){% elif max_delta.val > 0.001 %}var(--ts-danger,#ef4444){% else %}var(--ts-text-muted){% endif %};"
-            title="Massimo |Δ vs baseline| tra i sottogruppi">
+            title="Maximum |Δ vs baseline| across subgroups">
         max&nbsp;|Δ|&nbsp;{{ "%+.4f"|format(max_delta.val) }}
       </span>
       {% endif %}

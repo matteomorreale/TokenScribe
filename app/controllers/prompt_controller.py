@@ -260,7 +260,7 @@ def refresh_pei(prompt_id: int):
     approved = _tm().get_approved_by_prompt(prompt_id)
     texts = [c["text"] for c in approved if c.get("text")]
     if not texts:
-        flash("Nessuna traduzione approvata — PEI non calcolabile.", "warning")
+        flash("No approved translations — PEI cannot be computed.", "warning")
         return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
     pei_result = _scorer.compute_pei(texts)
     _pm().save_pei_snapshot(
@@ -271,7 +271,7 @@ def refresh_pei(prompt_id: int):
         cv_token=float(pei_result.get("cv_token_count") or 0.0),
     )
     flash(
-        f"PEI aggiornato: {float(pei_result.get('pei') or 0.0):.4f} ({len(texts)} lingue approvate).",
+        f"PEI updated: {float(pei_result.get('pei') or 0.0):.4f} ({len(texts)} approved languages).",
         "success",
     )
     return redirect(url_for("prompt.detail_prompt", prompt_id=prompt_id))
@@ -296,7 +296,7 @@ def migrate_delimiters():
     new_open = request.form.get("new_open", "<input>")
     new_close = request.form.get("new_close", "</input>")
     count = _pm().migrate_delimiters(old_open, old_close, new_open, new_close)
-    flash(f"Migrazione completata: {count} prompt aggiornati ({old_open}…{old_close} → {new_open}…{new_close}).", "success")
+    flash(f"Migration completed: {count} prompts updated ({old_open}…{old_close} → {new_open}…{new_close}).", "success")
     return redirect(request.referrer or url_for("study.list_studies"))
 
 

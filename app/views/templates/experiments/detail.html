@@ -50,21 +50,21 @@
       {% endif %}
     </span>
     <span id="ts-progress-text" style="font-size:.82rem; color:var(--ts-text-muted);">
-      {{ progress.done }}/{{ progress.total }} completati
-      {% if progress.error > 0 %} — <span style="color:var(--ts-danger,#ef4444);">{{ progress.error }} errori</span>{% endif %}
+      {{ progress.done }}/{{ progress.total }} completed
+      {% if progress.error > 0 %} — <span style="color:var(--ts-danger,#ef4444);">{{ progress.error }} errors</span>{% endif %}
     </span>
     {% if is_active %}
-    <span style="font-size:.78rem; color:var(--ts-text-muted);">aggiornamento live ogni 3s</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">live update every 3s</span>
     <form method="post" action="{{ url_for('run.stop_run', run_id=run.id) }}" style="margin-left:auto;">
       <button type="submit" class="ts-btn ts-btn-sm ts-btn-danger"
-              onclick="return confirm('Fermare la run #{{ run.id }}? Le operazioni in corso termineranno, quelle in attesa verranno annullate.')">
+              onclick="return confirm('Stop run #{{ run.id }}? Active operations will finish, pending ones will be cancelled.')">
         ⏹ Stop
       </button>
     </form>
     {% endif %}
   </div>
 
-  {# Barra di avanzamento #}
+  {# Progress bar #}
   <div style="padding:.25rem 1.25rem .75rem;">
     <div style="background:var(--ts-border); border-radius:4px; height:8px; overflow:hidden;">
       <div id="ts-progress-bar"
@@ -193,29 +193,29 @@
   </div>
   {% endif %}
 
-  {# Azioni restart (run fermata) #}
+  {# Restart actions (stopped run) #}
   {% if is_stopped %}
   <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; border-top:1px solid var(--ts-border); background:rgba(136,136,136,.06);">
     <span style="font-size:.85rem; color:var(--ts-text-muted);">
-      Run fermata manualmente — {{ progress.cancelled }} operazioni annullate, {{ progress.done }} completate.
+      Run stopped manually — {{ progress.cancelled }} operations cancelled, {{ progress.done }} completed.
     </span>
     <form method="post" action="{{ url_for('run.restart_run', run_id=run.id) }}" style="margin-left:auto;">
-      <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">▶ Riavvia run</button>
+      <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">▶ Restart run</button>
     </form>
   </div>
   {% endif %}
 
-  {# Azioni resume / retry — visibile per partial/failed E per stopped con errori #}
+  {# Resume / retry actions — visible for partial/failed AND for stopped with errors #}
   {% if has_errors or (is_stopped and progress and progress.error > 0) %}
   <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; border-top:1px solid var(--ts-border);">
     <form method="post" action="{{ url_for('run.retry_errors', run_id=run.id) }}">
       <button class="ts-btn ts-btn-primary ts-btn-sm">
-        Retry errori{% if progress.error > 0 %} ({{ progress.error }}){% endif %}
+        Retry errors{% if progress.error > 0 %} ({{ progress.error }}){% endif %}
       </button>
     </form>
     <details style="flex:1; min-width:200px;">
       <summary class="ts-btn ts-btn-secondary ts-btn-sm" style="cursor:pointer; list-style:none; display:inline-flex; align-items:center;">
-        Retry per modello
+        Retry by model
       </summary>
       <form method="post" action="{{ url_for('run.retry_models', run_id=run.id) }}"
             style="margin-top:.5rem; padding:.75rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:6px; display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
@@ -233,12 +233,12 @@
             {% endif %}
           {% endif %}
         {% endfor %}
-        <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;">Retry selezionati</button>
+        <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;">Retry selected</button>
       </form>
     </details>
     {% if not is_stopped %}
     <form method="post" action="{{ url_for('run.resume_run', run_id=run.id) }}">
-      <button class="ts-btn ts-btn-secondary ts-btn-sm">Riprendi run</button>
+      <button class="ts-btn ts-btn-secondary ts-btn-sm">Resume run</button>
     </form>
     {% endif %}
   </div>
@@ -246,17 +246,17 @@
 </div>
 {% endif %}
 
-{# ── Gestione Modelli (redo / replace) ──────────────────────────── #}
+{# ── Model Management (redo / replace) ──────────────────────────── #}
 {% if run_model_ids %}
 {% set run_models = namespace(seen=[], list=[]) %}
-{# Prima i modelli con risultati completati #}
+{# First models with completed results #}
 {% for r in results %}
   {% if r.model_id|string not in run_models.seen %}
     {% set _ = run_models.seen.append(r.model_id|string) %}
     {% set _ = run_models.list.append({'model_id': r.model_id, 'model_name': r.model_name, 'provider_name': r.provider_name, 'queued_only': false}) %}
   {% endif %}
 {% endfor %}
-{# Poi i modelli in coda senza risultati ancora (es. appena aggiunti) #}
+{# Then models in queue with no results yet (e.g. just added) #}
 {% for m in all_models %}
   {% if m.id in run_model_ids and m.id|string not in run_models.seen %}
     {% set _ = run_models.seen.append(m.id|string) %}
@@ -266,8 +266,8 @@
 {% if run_models.list %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
-    <span class="ts-card-title">Gestione Modelli</span>
-    <span style="font-size:.78rem; color:var(--ts-text-muted);">Rifai o sostituisci le chiamate per singolo AI</span>
+    <span class="ts-card-title">Model Management</span>
+    <span style="font-size:.78rem; color:var(--ts-text-muted);">Redo or replace calls for individual AI models</span>
   </div>
   <div style="padding:.5rem 1.25rem .875rem; display:flex; flex-direction:column; gap:.5rem;">
     {% for m in run_models.list %}
@@ -276,24 +276,24 @@
       <span style="font-family:var(--ts-mono); font-size:.83rem; font-weight:600;">{{ m.model_name }}</span>
       <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ m.provider_name }}</span>
       {% if m.queued_only %}
-        <span class="ts-badge ts-badge-pending">in coda</span>
+        <span class="ts-badge ts-badge-pending">queued</span>
         <div style="margin-left:auto; display:flex; gap:.4rem;">
           <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
                   onclick="openReplaceModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
-            Sostituisci
+            Replace
           </button>
         </div>
       {% else %}
-        <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ model_results|length }} risultati</span>
+        <span style="font-size:.75rem; color:var(--ts-text-muted);">{{ model_results|length }} results</span>
         {% if run_status in ('completed', 'partial', 'stopped') %}
         <div style="margin-left:auto; display:flex; gap:.4rem;">
           <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
                   onclick="openRedoModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
-            Rifai
+            Redo
           </button>
           <button type="button" class="ts-btn ts-btn-sm ts-btn-secondary"
                   onclick="openReplaceModal({{ m.model_id }}, '{{ m.model_name | replace("'", "\\'") | replace('"', '\\"') }}')">
-            Sostituisci
+            Replace
           </button>
         </div>
         {% endif %}
@@ -305,25 +305,25 @@
 {% endif %}
 {% endif %}
 
-{# ── Ricalcola token visibili ──────────────────────────────────────── #}
+{# ── Recompute visible tokens ──────────────────────────────────────── #}
 {% if run_status in ('completed', 'partial', 'stopped') %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div style="padding:.65rem 1.25rem; display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
     <span style="font-size:.83rem; color:var(--ts-text-muted);">
-      <strong style="color:var(--ts-text);">Ricalcola token visibili</strong>
-      — corregge <code>visible_output_tokens</code> e <code>ror</code> per run con provider
-      che nascondono reasoning tokens nel conteggio API (es. Qwen).
+      <strong style="color:var(--ts-text);">Recompute visible tokens</strong>
+      — corrects <code>visible_output_tokens</code> and <code>ror</code> for runs with providers
+      that hide reasoning tokens in the API count (e.g. Qwen).
     </span>
     <form method="post" action="{{ url_for('run.recompute_tokens', run_id=run.id) }}" style="margin-left:auto;">
       <button type="submit" class="ts-btn ts-btn-sm ts-btn-secondary">
-        ⟳ Ricalcola token visibili
+        ⟳ Recompute visible tokens
       </button>
     </form>
   </div>
 </div>
 {% endif %}
 
-{# ── Aggiungi Modelli ─────────────────────────────────────────────── #}
+{# ── Add Models ─────────────────────────────────────────────── #}
 {% if run_status in ('completed', 'partial', 'stopped') %}
 {% set addable = namespace(list=[]) %}
 {% for m in all_models %}
@@ -334,9 +334,9 @@
 {% if addable.list %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
   <div class="ts-card-header" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
-    <span class="ts-card-title">Aggiungi Modelli</span>
+    <span class="ts-card-title">Add Models</span>
     <span style="font-size:.78rem; color:var(--ts-text-muted);">
-      Accoda nuovi AI alla run esistente — {{ detected_repetitions }} ripetizioni per cella (come la run originale)
+      Queue new AI models to the existing run — {{ detected_repetitions }} repetitions per cell (matching the original run)
     </span>
   </div>
   <form method="POST" action="{{ url_for('run.add_models', run_id=run.id) }}">
@@ -351,8 +351,8 @@
         {% endfor %}
       </div>
       <div>
-        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm" data-loading="Accodamento…">
-          Aggiungi alla Run
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm" data-loading="Queuing…">
+          Add to Run
         </button>
       </div>
     </div>
@@ -361,14 +361,14 @@
 {% endif %}
 {% endif %}
 
-{# ── Storico Archivi ─────────────────────────────────────────────── #}
+{# ── Archive History ─────────────────────────────────────────────── #}
 {% if run_history %}
 <div class="ts-card" style="margin-bottom:1.25rem;">
-  <div class="ts-card-header"><span class="ts-card-title">Storico Archivi</span></div>
+  <div class="ts-card-header"><span class="ts-card-title">Archive History</span></div>
   <div class="ts-table-wrap">
     <table class="ts-table" style="font-size:.78rem;">
       <thead>
-        <tr><th>Data</th><th>Modello</th><th>Operazione</th><th>Sostituito con</th></tr>
+        <tr><th>Date</th><th>Model</th><th>Operation</th><th>Replaced with</th></tr>
       </thead>
       <tbody>
         {% for h in run_history %}
@@ -531,7 +531,7 @@
           <td style="font-family:var(--ts-mono); font-size:.78rem;">{{ r.model_name }}</td>
           <td style="font-variant-numeric:tabular-nums;">{{ r.input_tokens }}</td>
           <td style="font-variant-numeric:tabular-nums;">
-            {% if not r.response_valid %}<span title="Risposta vuota — il modello non ha prodotto output visibile. Consulta i log della run per il dettaglio (raw_len, input/output tokens)." style="color:var(--ts-danger,#ef4444); font-weight:600;">✗</span> {% endif %}
+            {% if not r.response_valid %}<span title="Empty response — the model produced no visible output. Check the run logs for details (raw_len, input/output tokens)." style="color:var(--ts-danger,#ef4444); font-weight:600;">✗</span> {% endif %}
             {{ r.visible_output_tokens if r.visible_output_tokens is not none else '—' }}
           </td>
           <td style="font-variant-numeric:tabular-nums; color:{% if r.reasoning_tokens and r.reasoning_tokens > 0 %}var(--ts-warning, #f59e0b){% else %}var(--ts-text-muted){% endif %};">{{ r.reasoning_tokens if r.reasoning_tokens is not none else '—' }}</td>
@@ -564,7 +564,7 @@
       </tbody>
       <tfoot>
         <tr style="border-top:2px solid var(--ts-border); font-weight:600;">
-          <td colspan="10" style="text-align:right; font-size:.78rem; color:var(--ts-text-muted); padding-right:.75rem;">Totale</td>
+          <td colspan="10" style="text-align:right; font-size:.78rem; color:var(--ts-text-muted); padding-right:.75rem;">Total</td>
           <td style="font-variant-numeric:tabular-nums;">${{ "%.6f"|format(results|sum(attribute='cost_visible_only')) }}</td>
           <td style="font-variant-numeric:tabular-nums; color:var(--ts-warning,#f59e0b);">${{ "%.6f"|format(results|sum(attribute='cost_reasoning')) }}</td>
           <td style="font-variant-numeric:tabular-nums; color:var(--ts-text-muted);">${{ "%.6f"|format(results|sum(attribute='cost')) }}</td>
@@ -578,8 +578,8 @@
   </p>
   {% if results|sum(attribute='input_tokens') > 0 and results|sum(attribute='cost') == 0 %}
   <p style="font-size:.8rem; color:var(--ts-warning,#f59e0b); padding:.4rem 1rem .75rem; border-top:1px solid var(--ts-border); margin:0;">
-    ⚠ I costi mostrano $0 — il pricing di questi modelli non è configurato.
-    Vai in <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning,#f59e0b);">Impostazioni → Modelli</a> per impostarlo.
+    ⚠ Costs show $0 — pricing for these models is not configured.
+    Go to <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning,#f59e0b);">Settings → Models</a> to configure it.
   </p>
   {% endif %}
   {% else %}
@@ -587,11 +587,11 @@
   {% endif %}
 </div>
 
-<!-- Modal: Rifai Modello -->
+<!-- Modal: Redo Model -->
 <div id="modal-redo" class="ts-modal">
   <div class="ts-modal-content" style="max-width:480px; width:90%;">
     <div class="ts-modal-header">
-      <h2 class="ts-modal-title" id="redo-modal-title">Rifai chiamate</h2>
+      <h2 class="ts-modal-title" id="redo-modal-title">Redo calls</h2>
       <button class="ts-modal-close" onclick="closeModal('modal-redo')">&times;</button>
     </div>
     <form method="post" action="{{ url_for('run.redo_model', run_id=run.id) }}">
@@ -599,30 +599,30 @@
         <p style="font-size:.87rem; margin-bottom:1rem;" id="redo-modal-desc"></p>
         <label style="display:flex; align-items:center; gap:.5rem; font-size:.85rem; cursor:pointer;">
           <input type="checkbox" name="save_history" value="1" id="redo-save-history">
-          Salva i risultati attuali come storico (JSON nel DB)
+          Save current results as history (JSON in DB)
         </label>
         <input type="hidden" name="model_id" id="redo-model-id">
       </div>
       <div style="display:flex; justify-content:flex-end; gap:.5rem; padding:0 1.25rem 1.25rem;">
-        <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="closeModal('modal-redo')">Annulla</button>
-        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Procedi</button>
+        <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="closeModal('modal-redo')">Cancel</button>
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Proceed</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- Modal: Sostituisci Modello -->
+<!-- Modal: Replace Model -->
 <div id="modal-replace" class="ts-modal">
   <div class="ts-modal-content" style="max-width:520px; width:90%;">
     <div class="ts-modal-header">
-      <h2 class="ts-modal-title" id="replace-modal-title">Sostituisci modello</h2>
+      <h2 class="ts-modal-title" id="replace-modal-title">Replace model</h2>
       <button class="ts-modal-close" onclick="closeModal('modal-replace')">&times;</button>
     </div>
     <form method="post" action="{{ url_for('run.replace_model', run_id=run.id) }}">
       <div class="ts-modal-body">
         <p style="font-size:.87rem; margin-bottom:.75rem;" id="replace-modal-desc"></p>
         <div style="margin-bottom:.875rem;">
-          <label style="display:block; font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.35rem;">Sostituisci con</label>
+          <label style="display:block; font-size:.8rem; color:var(--ts-text-muted); margin-bottom:.35rem;">Replace with</label>
           <select name="new_model_id" id="replace-new-model"
                   style="width:100%; padding:.4rem .6rem; background:var(--ts-bg); border:1px solid var(--ts-border); border-radius:4px; color:var(--ts-text); font-size:.85rem;">
             {% for m in all_models %}
@@ -632,13 +632,13 @@
         </div>
         <label style="display:flex; align-items:center; gap:.5rem; font-size:.85rem; cursor:pointer;">
           <input type="checkbox" name="save_history" value="1" id="replace-save-history">
-          Salva i risultati attuali come storico (JSON nel DB)
+          Save current results as history (JSON in DB)
         </label>
         <input type="hidden" name="old_model_id" id="replace-old-model-id">
       </div>
       <div style="display:flex; justify-content:flex-end; gap:.5rem; padding:0 1.25rem 1.25rem;">
-        <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="closeModal('modal-replace')">Annulla</button>
-        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Procedi</button>
+        <button type="button" class="ts-btn ts-btn-secondary ts-btn-sm" onclick="closeModal('modal-replace')">Cancel</button>
+        <button type="submit" class="ts-btn ts-btn-primary ts-btn-sm">Proceed</button>
       </div>
     </form>
   </div>
@@ -723,7 +723,7 @@
       if (!res.ok) return;
       const data = await res.json();
 
-      // Aggiorna badge run status
+      // Update run status badge
       const badge  = document.getElementById('ts-run-badge');
       const runSt  = data.run_status || 'unknown';
       if (badge) {
@@ -733,15 +733,15 @@
         badge.innerHTML = `<span class="ts-badge ${cls}"${style}>${lbl}</span>`;
       }
 
-      // Aggiorna testo avanzamento
+      // Update progress text
       const p  = data.progress || {};
       const txt = document.getElementById('ts-progress-text');
       if (txt) {
-        const errTxt = p.error > 0 ? ` — <span style="color:var(--ts-danger,#ef4444);">${p.error} errori</span>` : '';
-        txt.innerHTML = `${p.done}/${p.total} completati${errTxt}`;
+        const errTxt = p.error > 0 ? ` — <span style="color:var(--ts-danger,#ef4444);">${p.error} errors</span>` : '';
+        txt.innerHTML = `${p.done}/${p.total} completed${errTxt}`;
       }
 
-      // Aggiorna barra
+      // Update progress bar
       const bar = document.getElementById('ts-progress-bar');
       if (bar) {
         bar.style.width = (p.pct || 0) + '%';
@@ -749,7 +749,7 @@
         else if (['partial','failed'].includes(runSt)) bar.style.background = 'var(--ts-warning,#f59e0b)';
       }
 
-      // Aggiorna righe tabella
+      // Update table rows
       const tbody = document.getElementById('ts-queue-tbody');
       if (tbody && data.items) {
         data.items.forEach(item => {
@@ -765,7 +765,7 @@
         });
       }
 
-      // Aggiorna griglia LLM calls
+      // Update LLM calls grid
       if (data.items) {
         const CELL_PRIO = { error:0, timeout:0, running:1, pending:2, done:3, cancelled:4 };
         const cellMap = {};
@@ -783,7 +783,7 @@
           cell.className = `ts-gcell ts-gc-${st}`;
           cell.title = cell.title.replace(/: \S+$/, `: ${st}`);
         });
-        // Aggiorna contatori running/pending nell'header griglia
+        // Update running/pending counters in grid header
         const llmItems = data.items.filter(i => i.operation_type === 'llm_call');
         const nRunning = llmItems.filter(i => i.status === 'running').length;
         const nPending  = llmItems.filter(i => i.status === 'pending').length;
@@ -792,13 +792,13 @@
         if (gridInfo) gridInfo.textContent = `${nRunning} running · ${nPending} pending`;
       }
 
-      // Se la run è terminata, smetti di fare polling e ricarica la pagina
+      // If the run is done, stop polling and reload the page
       if (!['queued','running'].includes(runSt)) {
         stopPolling();
-        // Piccolo delay per dare al DB il tempo di commitare gli ultimi risultati
+        // Short delay to let the DB commit the last results
         setTimeout(() => { window.location.reload(); }, 800);
       }
-    } catch (_) { /* ignora errori di rete */ }
+    } catch (_) { /* ignore network errors */ }
   }
 
   pollInterval = setInterval(poll, 3000);
@@ -854,20 +854,20 @@
 <script>
 function openRedoModal(modelId, modelName) {
   document.getElementById('redo-model-id').value = modelId;
-  document.getElementById('redo-modal-title').textContent = 'Rifai chiamate — ' + modelName;
+  document.getElementById('redo-modal-title').textContent = 'Redo calls — ' + modelName;
   document.getElementById('redo-modal-desc').textContent =
-    'Tutte le chiamate per ' + modelName + ' verranno rifatte da zero. ' +
-    'I risultati attuali verranno eliminati. Vuoi salvarne una copia come storico?';
+    'All calls for ' + modelName + ' will be redone from scratch. ' +
+    'Current results will be deleted. Do you want to save a copy as history?';
   document.getElementById('redo-save-history').checked = false;
   document.getElementById('modal-redo').classList.add('active');
 }
 
 function openReplaceModal(modelId, modelName) {
   document.getElementById('replace-old-model-id').value = modelId;
-  document.getElementById('replace-modal-title').textContent = 'Sostituisci — ' + modelName;
+  document.getElementById('replace-modal-title').textContent = 'Replace — ' + modelName;
   document.getElementById('replace-modal-desc').textContent =
-    'Tutte le chiamate di ' + modelName + ' verranno rimpiazzate con il modello selezionato. ' +
-    'I risultati attuali verranno eliminati. Vuoi salvarne una copia come storico?';
+    'All calls for ' + modelName + ' will be replaced with the selected model. ' +
+    'Current results will be deleted. Do you want to save a copy as history?';
   document.getElementById('replace-save-history').checked = false;
 
   const sel = document.getElementById('replace-new-model');

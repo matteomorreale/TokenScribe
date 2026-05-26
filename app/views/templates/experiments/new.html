@@ -88,8 +88,8 @@
     </div>
     {% else %}
     <div style="background:rgba(249,199,79,.06); border:1px solid rgba(249,199,79,.3); border-radius:6px; padding:.6rem .85rem; margin-bottom:1rem; font-size:.8rem; color:var(--ts-warning);">
-      ⚠ MAGI Judge Panel non configurato — Phase 2 verrà saltata.
-      <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning); text-decoration:underline;">Configura in Settings →</a>
+      ⚠ MAGI Judge Panel not configured — Phase 2 will be skipped.
+      <a href="{{ url_for('settings.settings_dashboard') }}" style="color:var(--ts-warning); text-decoration:underline;">Configure in Settings →</a>
     </div>
     {% endif %}
 
@@ -100,8 +100,8 @@
           <span style="font-size:.76rem; color:var(--ts-text-muted);">Reasoning override:</span>
           <select id="ts-reasoning-all" class="ts-input" style="width:auto; font-size:.75rem; padding:.18rem .45rem;"
                   onchange="(function(v){document.querySelectorAll('select[name^=\'reasoning_override_\']').forEach(function(s){s.value=v;});})( this.value)">
-            <option value="" disabled selected>— applica a tutti —</option>
-            <option value="">Default (config modello)</option>
+            <option value="" disabled selected>— apply to all —</option>
+            <option value="">Default (model config)</option>
             <option value="on">Force ON</option>
             <option value="off">Force OFF</option>
           </select>

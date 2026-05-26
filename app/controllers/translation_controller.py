@@ -304,7 +304,7 @@ def compute_selection_scores(prompt_id: int):
 
     scored = [c for c in pool if c.get("sfs") is not None]
     if not scored:
-        flash("Nessun candidato con SFS nella selezione. Scorifica prima le traduzioni.", "warning")
+        flash("No candidates with SFS in the selection. Score translations first.", "warning")
         return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
 
     prompt = _pm().get_by_id(prompt_id)
@@ -377,8 +377,8 @@ def compute_selection_scores(prompt_id: int):
                 if panel.get("magi_offline"):
                     magi_went_offline = True
                     flash(
-                        f"MAGI System offline — {panel.get('magi_offline_reason', 'errore sconosciuto')}. "
-                        "Elaborazione interrotta.",
+                        f"MAGI System offline — {panel.get('magi_offline_reason', 'unknown error')}. "
+                        "Processing stopped.",
                         "error",
                     )
                     break
@@ -391,17 +391,17 @@ def compute_selection_scores(prompt_id: int):
                 panel_ran += 1
 
     excluded = len(pool) - len(scored)
-    msg = f"MAGI Phase 1: {len(result)} candidati classificati (λ=0.5, ν=0.5, PEI={pei:.4f})"
+    msg = f"MAGI Phase 1: {len(result)} candidates classified (λ=0.5, ν=0.5, PEI={pei:.4f})"
     if excluded:
-        msg += f" — {excluded} esclusi (nessun SFS)"
+        msg += f" — {excluded} excluded (no SFS)"
     if magi_went_offline:
-        msg += f" · Phase 2: MAGI offline dopo {panel_ran} candidati"
+        msg += f" · Phase 2: MAGI offline after {panel_ran} candidates"
     elif panel_ran:
-        msg += f" · Phase 2: {panel_ran} candidati valutati dai giudici"
+        msg += f" · Phase 2: {panel_ran} candidates evaluated by judges"
     elif run_phase2 and len(judge_models) == 3:
-        msg += " · Phase 2: nessun candidato richiede i giudici"
+        msg += " · Phase 2: no candidates require judges"
     elif run_phase2 and len(judge_models) < 3:
-        msg += " · Phase 2: configura 3 giudici nelle Impostazioni"
+        msg += " · Phase 2: configure 3 judges in Settings"
     flash(msg, "success" if not magi_went_offline else "warning")
     return redirect(url_for("translation.list_translations", prompt_id=prompt_id))
 
