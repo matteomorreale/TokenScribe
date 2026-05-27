@@ -168,6 +168,8 @@
     Score = SFS &minus; 0.5&middot;PEI &minus; 0.5&middot;|LER&minus;1| &nbsp;&nbsp;|&nbsp;&nbsp;
     MAGI? = rank &gt; max(1, &lfloor;n/4&rfloor;) &nbsp;&nbsp;|&nbsp;&nbsp;
     PEI from most recent experiment run for this prompt &mdash; <em>model-invariant</em>: PEI depends only on the approved translation texts, not on which LLM was used.
+    &nbsp;&nbsp;|&nbsp;&nbsp;
+    <span title="LER = len(translation) / len(english_source). English is the baseline original; its ratio would be trivially 1.0 by definition.">LER chr shows <strong>&mdash;</strong> for English (baseline)</span>.
   </p>
   {% for prompt_id, scores in selection_scores_by_prompt.items() %}
   <div style="padding:.75rem 1rem .25rem; border-top:1px solid var(--ts-border);">

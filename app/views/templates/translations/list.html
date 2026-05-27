@@ -125,7 +125,8 @@
     <span style="font-size:.78rem; color:var(--ts-text-muted); margin-left:.5rem;">
       {{ magi_results|length }} candidates &nbsp;·&nbsp;
       Score = SFS − 0.5·PEI − 0.5·|LER−1| &nbsp;·&nbsp;
-      MAGI? = rank &gt; max(1, ⌊n/4⌋)
+      MAGI? = rank &gt; max(1, ⌊n/4⌋) &nbsp;·&nbsp;
+      <span title="LER = len(translation) / len(english_source). English is the baseline original; its ratio is trivially 1.0 by definition.">LER is absent for English (baseline)</span>
     </span>
     <button class="ts-btn ts-btn-secondary ts-btn-sm" style="margin-left:auto;" onclick="openMAGIModal()">Recompute</button>
   </div>

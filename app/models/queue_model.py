@@ -572,10 +572,29 @@ class QueueModel:
         return status
 
     def _count_invalid_token_results(self, run_id: int) -> int:
+        """Count cells whose LATEST attempt has response_valid=0.
+
+        Only the row with the highest attempt_index per (prompt, language, model, repetition)
+        is considered — superseded failed attempts from earlier tries are ignored.
+        This prevents a successful retry from leaving the run in 'partial' status
+        because an old invalid row still exists in the table.
+        """
         conn = self.db.get_connection()
         try:
             row = conn.execute(
-                "SELECT COUNT(*) FROM token_results WHERE run_id=? AND response_valid=0",
+                """SELECT COUNT(*)
+                   FROM token_results tr
+                   WHERE tr.run_id = ?
+                     AND tr.response_valid = 0
+                     AND tr.attempt_index = (
+                         SELECT MAX(t2.attempt_index)
+                         FROM token_results t2
+                         WHERE t2.run_id        = tr.run_id
+                           AND t2.prompt_id     = tr.prompt_id
+                           AND t2.language_id   = tr.language_id
+                           AND t2.model_id      = tr.model_id
+                           AND t2.repetition_index = tr.repetition_index
+                     )""",
                 (run_id,),
             ).fetchone()
             return row[0] if row else 0
