@@ -75,6 +75,69 @@
     </div>
   </div>
 
+  {# ── Calibration Battery Progress ── #}
+  {% set cal_q = queue_items | selectattr('operation_type', 'equalto', 'calibration_llm_call') | list %}
+  {% set cal_total = cal_q | length %}
+  {% set cal_done = cal_q | selectattr('status', 'equalto', 'done') | list | length %}
+  {% set cal_err_ns = namespace(n=0) %}
+  {% for _it in cal_q %}{% if _it.status in ('error', 'timeout') %}{% set cal_err_ns.n = cal_err_ns.n + 1 %}{% endif %}{% endfor %}
+  {% set cal_err = cal_err_ns.n %}
+  {% set cal_pct = ((cal_done / cal_total * 100) | int) if cal_total > 0 else 0 %}
+  <div id="ts-cal-section" style="{% if cal_total == 0 %}display:none; {% endif %}padding:.5rem 1.25rem .75rem; border-top:1px solid var(--ts-border);">
+    <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; margin-bottom:.4rem;">
+      <span style="font-size:.78rem; font-weight:600; color:var(--ts-text);">⚙ Calibration Battery</span>
+      <span id="ts-cal-phase"
+        {% if cal_total > 0 and is_active and (cal_done + cal_err) < cal_total %}
+          style="display:inline-flex; align-items:center; gap:.35rem; font-size:.72rem; color:var(--ts-accent,#6366f1);"
+        {% else %}
+          style="font-size:.72rem; color:var(--ts-text-muted);"
+        {% endif %}>
+        {% if cal_total > 0 and is_active and (cal_done + cal_err) < cal_total %}
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span>
+          in corso
+        {% elif cal_total > 0 %}
+          completata
+        {% endif %}
+      </span>
+      <span id="ts-cal-text" style="font-size:.72rem; color:var(--ts-text-muted); margin-left:auto;">
+        {% if cal_total > 0 %}{{ cal_done }}/{{ cal_total }}{% if cal_err > 0 %} · <span style="color:var(--ts-danger,#ef4444);">{{ cal_err }} err</span>{% endif %}{% endif %}
+      </span>
+    </div>
+    <div style="background:var(--ts-border); border-radius:4px; height:5px; overflow:hidden; margin-bottom:.6rem;">
+      <div id="ts-cal-bar"
+           style="height:100%; border-radius:4px; transition:width .4s;
+                  width:{{ cal_pct }}%;
+                  background:{% if cal_err > 0 %}var(--ts-warning,#f59e0b){% elif cal_pct == 100 and cal_total > 0 %}var(--ts-success,#22c55e){% else %}var(--ts-accent,#6366f1){% endif %};">
+      </div>
+    </div>
+    <details>
+      <summary style="font-size:.72rem; color:var(--ts-text-muted); cursor:pointer; list-style:none; display:inline-flex; align-items:center; gap:.3rem; user-select:none; outline:none;">
+        <span>ℹ Cos'è la calibration battery?</span>
+      </summary>
+      <div style="font-size:.75rem; color:var(--ts-text-muted); margin-top:.4rem; line-height:1.55; padding:.5rem .75rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:5px; border-left:2px solid var(--ts-accent,#6366f1);">
+        <p style="margin:0 0 .4rem 0;">
+          <strong style="color:var(--ts-text);">La calibration battery</strong> esegue <strong>4 prompt standardizzati</strong>
+          (cal_01_short → cal_04_long_varied) su ogni combinazione modello × lingua,
+          <em>prima</em> dei prompt sperimentali. Misura la velocità di generazione token baseline
+          (tok/sec) per stimare il tasso di riferimento necessario al calcolo dell'<strong>iRRT</strong>.
+        </p>
+        <p style="margin:0 0 .4rem 0;">
+          <strong style="color:var(--ts-text);">iRRT</strong> (Implicit Reasoning Rate Tracer) —
+          confronta la velocità di token streaming osservata durante i prompt sperimentali
+          con il tasso baseline stimato dalla calibration.
+          Una velocità significativamente inferiore alla baseline segnala attività di reasoning interno
+          (thinking nascosto), anche nei modelli che non lo dichiarano esplicitamente nell'API.
+        </p>
+        <p style="margin:0; font-size:.7rem;">
+          I risultati di calibration sono esclusi da PEI, MAGI e LER — sono metriche infrastrutturali,
+          non dati sperimentali. Solo <code>cal_03_long</code> e <code>cal_04_long_varied</code>
+          con <code>baseline_quality='clean'</code> contribuiscono ai <code>baseline_rates</code>
+          nell'export JSON.
+        </p>
+      </div>
+    </details>
+  </div>
+
   {# ── Griglia LLM calls (visibile solo durante run attiva) ── #}
   {% if is_active %}
   {% set llm_q = queue_items | selectattr('operation_type', 'equalto', 'llm_call') | list %}
@@ -790,6 +853,48 @@
         const gridInfo = document.querySelector('#ts-call-grid')?.closest('div[style*="overflow-x"]')
                            ?.previousElementSibling?.querySelector('span:last-child');
         if (gridInfo) gridInfo.textContent = `${nRunning} running · ${nPending} pending`;
+
+        // Update calibration battery progress
+        const calItems = data.items.filter(i => i.operation_type === 'calibration_llm_call');
+        const calTotal = calItems.length;
+        const calDone  = calItems.filter(i => i.status === 'done').length;
+        const calRunning = calItems.filter(i => i.status === 'running').length;
+        const calErr   = calItems.filter(i => ['error','timeout'].includes(i.status)).length;
+        const calPct   = calTotal > 0 ? Math.round((calDone / calTotal) * 100) : 0;
+
+        const calSection = document.getElementById('ts-cal-section');
+        if (calSection && calTotal > 0) {
+          calSection.style.display = '';
+
+          const calBar = document.getElementById('ts-cal-bar');
+          if (calBar) {
+            calBar.style.width = calPct + '%';
+            calBar.style.background = calErr > 0
+              ? 'var(--ts-warning,#f59e0b)'
+              : calPct === 100
+                ? 'var(--ts-success,#22c55e)'
+                : 'var(--ts-accent,#6366f1)';
+          }
+
+          const calText = document.getElementById('ts-cal-text');
+          if (calText) {
+            calText.innerHTML = `${calDone}/${calTotal}` +
+              (calErr > 0 ? ` · <span style="color:var(--ts-danger,#ef4444);">${calErr} err</span>` : '');
+          }
+
+          const calPhase = document.getElementById('ts-cal-phase');
+          if (calPhase) {
+            const isCalActive = ['queued','running'].includes(runSt) &&
+                                (calRunning > 0 || (calDone + calErr) < calTotal);
+            if (isCalActive) {
+              calPhase.style.cssText = 'display:inline-flex; align-items:center; gap:.35rem; font-size:.72rem; color:var(--ts-accent,#6366f1);';
+              calPhase.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span> in corso`;
+            } else {
+              calPhase.style.cssText = 'font-size:.72rem; color:var(--ts-text-muted);';
+              calPhase.textContent = 'completata';
+            }
+          }
+        }
       }
 
       // If the run is done, stop polling and reload the page
