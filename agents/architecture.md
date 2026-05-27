@@ -23,10 +23,11 @@ TokenScribe/
 │   │   ├── selection_score_model.py  # MAGI Phase 1 + readiness semaphore
 │   │   └── settings_model.py
 │   ├── services/                # Business logic layer
-│   │   ├── llm_service.py       # Unified LLM provider interface (8 providers); model_not_found + rate-limit fallback
-│   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback; inflated-token heuristic
+│   │   ├── llm_service.py       # Unified LLM provider interface (8 providers); model_not_found + rate-limit fallback; check_timing_invariant()
+│   │   ├── queue_service.py     # Daemon thread processing run_queue; tier-aware model fallback; inflated-token heuristic; calibration_llm_call handler
 │   │   ├── scoring_service.py   # SFS (DSF+RTF), LER, PEI, MAGI Phase 1 computation
 │   │   ├── magi_service.py      # MAGI Phase 2: three-judge LLM panel with retry
+│   │   ├── calibration_service.py  # Calibration battery: baseline streaming-rate measurement for iRRT; resolve_calibration_model(), compute_baseline_rates(), compute_prefix_caching_evidence()
 │   │   ├── crypto_service.py    # Fernet AES-128-CBC symmetric encryption for API keys
 │   │   ├── correctness_service.py  # Response correctness evaluation (correct / in_target_language / language_leakage)
 │   │   ├── ne_service.py        # Named Entity Preservation Rate (NEPR) computation
@@ -186,6 +187,10 @@ TokenScribe/
 - `get_ne_labeling_status(prompt_id, language_id)` → `str | None` — `"pending" | "done" | "failed"` or None if not started
 - `set_ne_labeling_status(prompt_id, language_id, status)` — upserts status in `ne_labeling_status`
 - `insert_ne_expectations(prompt_id, language_id, entities, judge_name, judge_model)` — bulk-upserts into `ne_expectations`
+- `insert_calibration_result(run_id, calibration_prompt_id, language_id, model_id, …)` — inserts a `calibration_results` row; `attempt_index` auto-incremented atomically
+- `get_calibration_results_by_run(run_id)` → `list[dict]` — returns all calibration results enriched with model/language/prompt metadata
+- `get_calibration_translation(calibration_prompt_id, language_id)` → `str | None` — returns stored translation or None
+- `get_all_calibration_prompts()` → `list[dict]` — returns all 4 calibration prompts ordered by id
 
 ### QueueModel
 
@@ -194,12 +199,29 @@ TokenScribe/
 - `reset_items_for_retry(run_id, model_ids)` → int — resets `error` / `timeout` items (optionally filtered by model_ids) to `pending`
 - `recover_stale_running(run_id)` — resets items stuck in `running` after crash/restart
 - `recompute_run_status(run_id)` → str — derives `experiment_runs.status` from queue counts and `response_valid` flag; returns new status
+  — `_count_invalid_token_results(run_id)` (private) — counts only cells whose **latest** attempt (`MAX(attempt_index)`) has `response_valid=0`; superseded failed attempts are ignored, so a successful retry no longer leaves the run in `partial` status
 - `get_model_llm_payloads(run_id, model_id)` — returns all llm_call payloads for a model from run_queue (any status)
 - `redo_model_items(run_id, model_id, payloads)` — resets existing llm_call items for the model to `pending`; if no queue items exist, creates them from `payloads` (legacy runs support)
 - `replace_model_items(run_id, old_model_id, new_model_id, new_model_info, payloads)` — deletes old model's queue items and inserts new ones for `new_model_id` with updated payload fields
 - `get_run_repetitions(run_id)` → int — returns the number of repetitions used in the run (from `token_results` MAX repetition_index; fallback from queue payloads; default 3)
 - `has_pending_running_of_type(run_id, operation_type)` → bool — returns True if any item of the given type is still `pending` or `running` (used for dependency gating between queue operations)
 - `requeue_for_dependency(item_id)` — resets a `pending` item back to `pending` after its dependency completes (used when an `answer_discovery` item was blocked waiting for the llm_call to finish)
+
+### CalibrationService
+
+Module-level functions, file `app/services/calibration_service.py`.
+
+- `CALIBRATION_PROMPTS` — list of 4 hardcoded baseline prompts (immutable across runs; slugs: `cal_01_short`, `cal_02_medium`, `cal_03_long`, `cal_04_long_varied`)
+- `BASELINE_RATE_SLUGS` — `{"cal_03_long", "cal_04_long_varied"}` — only long prompts used for `baseline_rates` (more stable token rate estimates)
+- `REASONING_TO_CALIBRATION_MODEL` — dict mapping Grok-reasoning model names to their non-reasoning siblings (e.g. `grok-4.20-0309-reasoning` → `grok-4.20-0309-non-reasoning`)
+- `resolve_calibration_model(model_name, is_reasoning, provider)` → `(effective_model_name, effective_is_reasoning, reasoning_explicitly_disabled)`
+  — Grok-reasoning models: swap to non-reasoning sibling; OpenAI `o1/o3/o4/gpt-5*`: set `is_reasoning=False` (LLMService minimum effort); others: best-effort `is_reasoning=False`, flagged disabled if `is_reasoning was True`
+- `compute_baseline_quality(reasoning_tokens, attempt_status, reasoning_explicitly_disabled)` → `'clean' | 'degraded' | 'invalid'`
+  — `'clean'`: `attempt_status='success'` and `reasoning_tokens ≤ CLEAN_REASONING_THRESHOLD (30)`; `'degraded'`: reasoning contamination; `'invalid'`: call failed
+- `get_or_create_calibration_translation(db, calibration_prompt_id, language_id, …, llm_service, settings)` → `str | None`
+  — returns existing translation from `calibration_translations` or generates one via cheapest-provider cascade; English returns original text directly
+- `compute_baseline_rates(calibration_results)` → `dict` — per `(model_name, language_id)` token rate from `clean` long-prompt trials
+- `compute_prefix_caching_evidence(results)` → `dict` — computes `delta_ttft_first_vs_last` per model cell to detect prefix-cache warm-up
 
 ### CryptoService
 
@@ -345,6 +367,12 @@ This transparently handles models only available on the Responses API (e.g. gpt-
 For OpenAI models that accept `reasoning_effort` (`o1`/`o3`/`o4`/`gpt-5*`): `"on"` → `reasoning_effort="high"`, `"off"` → `reasoning_effort="low"` (or `"medium"` for gpt-5.5 which does not support `"low"`).
 Set per model in the new-experiment form via `reasoning_override_<model_id>` select; a global preset syncs all selects at once.
 
+**Timing metrics and stream_close invariant** (`time_to_stream_close_ms` in `token_results`):
+`time_to_stream_close_ms` is measured cumulatively from the request start (`t_done - t_req`), not as a teardown delta.
+This enforces the invariant: `TTFT + time_to_completion ≤ stream_close ≤ total_query_time`.
+`LLMService.call()` sets `stream_close_ms = total_query_time_ms` when the provider does not stream (fallback), and marks `stream_close_source='inferred'` (vs `'native'` for measured values).
+`check_timing_invariant(result)` → `bool` validates the full chain; returns `False` if the invariant is violated.
+
 **Inflated API token count heuristic** (in `QueueService._exec_llm_call()` and `ExperimentModel.recompute_visible_tokens()`):
 Some providers (notably Qwen reasoning models) bundle undisclosed reasoning tokens into `completion_tokens`, making `api_reported_output_tokens` disproportionately large.
 Detection: if `api_output / max(1, len(response_text)) > threshold` (2.0 for alphabetic scripts, 1.5 for logographic CJK scripts), the provider count is deemed inflated.
@@ -353,16 +381,17 @@ The same logic is available retroactively via `ExperimentModel.recompute_visible
 
 ## Queue Operation Types
 
-| `operation_type`         | Description                                                          | Timeout |
-|--------------------------|----------------------------------------------------------------------|---------|
-| `snapshot_translations`  | Freeze approved translations into `run_translation_snapshot`         | 60 s    |
-| `llm_call`               | Single LLM API call for one (prompt × language × model × repetition) | varies  |
-| `magi_phase2`            | MAGI Phase 2: 3-judge panel for one translation candidate            | 60 s    |
-| `compute_pei`            | Compute PEI for one (run × prompt)                                   | 60 s    |
-| `finalize_pei_groups`    | Compute per-script/morphology PEI group rows                         | 60 s    |
-| `magi_answer_discovery`  | MAGI 3-judge panel to discover correct answer variants               | 60 s    |
-| `magi_ne_labeling`       | MAGI 3-judge panel to label named entities for a (prompt, language)  | 60 s    |
-| `tsf_classification`     | TSF 3-judge panel to classify translation strategy for TSF prompts   | 90 s    |
+| `operation_type`         | Description                                                                      | Timeout |
+|--------------------------|----------------------------------------------------------------------------------|---------|
+| `snapshot_translations`  | Freeze approved translations into `run_translation_snapshot`                     | 60 s    |
+| `llm_call`               | Single LLM API call for one (prompt × language × model × repetition)             | varies  |
+| `calibration_llm_call`   | Single LLM call for one calibration prompt (priority 1 — runs before llm_calls)  | 200 s   |
+| `magi_phase2`            | MAGI Phase 2: 3-judge panel for one translation candidate                        | 60 s    |
+| `compute_pei`            | Compute PEI for one (run × prompt)                                               | 60 s    |
+| `finalize_pei_groups`    | Compute per-script/morphology PEI group rows                                     | 60 s    |
+| `magi_answer_discovery`  | MAGI 3-judge panel to discover correct answer variants                           | 60 s    |
+| `magi_ne_labeling`       | MAGI 3-judge panel to label named entities for a (prompt, language)              | 60 s    |
+| `tsf_classification`     | TSF 3-judge panel to classify translation strategy for TSF prompts               | 90 s    |
 
 Post-`llm_call` pipeline (all enqueued automatically after each successful `llm_call`):
 

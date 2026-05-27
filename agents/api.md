@@ -214,6 +214,10 @@ Note: `tsf_strategy` is NULL for `analysis_type='standard'` prompts; populated o
   "token_results": [ /* one row per run×prompt×language×model */ ],
   "pei_results": [ /* one row per run×prompt */ ],
   "pei_group_results": [ /* one row per run×prompt×group */ ],
+  "calibration_results": [ /* one row per run×calibration_prompt×language×model */ ],
+  "baseline_rates": { /* per (model_name, language_id): token rate from clean long-prompt calibration trials */ },
+  "prefix_caching_evidence": { /* per model cell: delta_ttft_first_vs_last */ },
+  "timing_anomalies_count": { /* per model_name: count of timing_anomaly=True rows */ },
   "translation_scores": [
     {
       "prompt_id": 1,
@@ -238,3 +242,6 @@ Note: `tsf_strategy` is NULL for `analysis_type='standard'` prompts; populated o
   ]
 }
 ```
+
+Note: `calibration_results`, `baseline_rates`, `prefix_caching_evidence`, `timing_anomalies_count` are always present (empty when no calibration data).
+`token_results` rows also include: `stream_close_source`, `had_retry_after`, `retry_after_sleep_ms`, `retry_count`, `request_timestamp_utc`, `cell_sequential_index`, `irrt_relative`, `irrt_absolute`.

@@ -82,6 +82,12 @@ token_results                 -- INSERT + retry; immutable per (run, cell, repet
   total_query_time_ms INTEGER,                -- wall-clock time for full LLM call (ms)
   time_to_first_token_ms INTEGER,             -- time to first token / streaming start (ms)
   time_to_completion_ms INTEGER,              -- time from first token to last token (ms)
+  stream_close_source TEXT NOT NULL DEFAULT 'native',  -- 'native' (measured) | 'inferred' (fallback = total_query_time_ms)
+  had_retry_after INTEGER NOT NULL DEFAULT 0,          -- 1 if provider sent Retry-After header (explicit rate limit)
+  retry_after_sleep_ms INTEGER NOT NULL DEFAULT 0,     -- ms slept due to Retry-After header
+  retry_count INTEGER NOT NULL DEFAULT 0,              -- number of requeue cycles this item went through before succeeding
+  request_timestamp_utc TEXT,                          -- ISO timestamp of the LLM request (ms precision; for prefix-caching analysis)
+  cell_sequential_index INTEGER,                       -- proxy for repetition_index; used for prefix-caching delta-TTFT computation
   created_at
 
   UNIQUE(run_id, prompt_id, language_id, model_id, repetition_index, attempt_index)
@@ -154,7 +160,7 @@ run_translation_snapshot
 
 run_queue                     -- async work items for QueueService daemon thread
   id, run_id → experiment_runs.id,
-  operation_type TEXT,        -- "llm_call" | "magi_phase2" | "compute_pei" | "finalize_pei_groups" | "snapshot_translations"
+  operation_type TEXT,        -- "llm_call" | "calibration_llm_call" | "magi_phase2" | "compute_pei" | "finalize_pei_groups" | "snapshot_translations"
   item_key TEXT,              -- unique key per run: e.g. "llm:p1:l3:m7:r0"  (r=repetition_index)
   payload TEXT (JSON),        -- all data the worker needs (model_name, provider, prompt text, etc.)
   status TEXT,                -- "pending" | "running" | "done" | "error" | "timeout" | "cancelled"
@@ -201,6 +207,37 @@ ne_labeling_status            -- completion tracker for MAGI NE labeling per (pr
   computed_at
   PRIMARY KEY (prompt_id, language_id)
 
+calibration_prompts           -- 4 hardcoded baseline prompts (immutable across runs — cross-run comparability)
+  id, slug TEXT UNIQUE,       -- e.g. "cal_01_short", "cal_02_medium", "cal_03_long", "cal_04_long_varied"
+  text_en TEXT NOT NULL,      -- English prompt text (never modified between runs)
+  target_tokens_min INT,      -- expected response token range lower bound
+  target_tokens_max INT       -- expected response token range upper bound
+
+calibration_translations      -- auto-translated calibration prompts per language (one-time, no MAGI review)
+  id, calibration_prompt_id → calibration_prompts.id,
+  language_id → languages.id,
+  text TEXT NOT NULL,
+  created_at
+  UNIQUE(calibration_prompt_id, language_id)
+
+calibration_results           -- token-level records for calibration trials (mirrors token_results; separate aggregate)
+  id, run_id → experiment_runs.id,
+  calibration_prompt_id → calibration_prompts.id,
+  language_id → languages.id, model_id → models.id,
+  input_tokens INT, api_reported_output_tokens INT, visible_output_tokens INT,
+  response_text TEXT, attempt_status TEXT, attempt_index INT, repetition_index INT,
+  total_query_time_ms INT, time_to_first_token_ms INT, time_to_completion_ms INT,
+  stream_close_source TEXT NOT NULL DEFAULT 'native',
+  reasoning_tokens INT,
+  baseline_quality TEXT NOT NULL DEFAULT 'clean',  -- 'clean' | 'degraded' | 'invalid'
+  had_retry_after INT NOT NULL DEFAULT 0,
+  retry_after_sleep_ms INT NOT NULL DEFAULT 0,
+  retry_count INT NOT NULL DEFAULT 0,
+  request_timestamp_utc TEXT,
+  cell_sequential_index INT,
+  created_at
+  UNIQUE(run_id, calibration_prompt_id, language_id, model_id, repetition_index, attempt_index)
+
 settings
   id, key (UNIQUE), value, updated_at
 
@@ -236,7 +273,11 @@ experiment_runs ──< token_results
 experiment_runs ──< pei_results
 experiment_runs ──< pei_group_results
 experiment_runs ──< run_history
+experiment_runs ──< calibration_results
+calibration_prompts ──< calibration_results
+calibration_prompts ──< calibration_translations
 token_results ──> models ──> providers
+calibration_results ──> models ──> providers
 ```
 
 ## Naming Conventions

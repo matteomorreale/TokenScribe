@@ -594,5 +594,57 @@
     "requires_db_changes": true,
     "notes_for_agent": "New column prompts.analysis_type TEXT DEFAULT 'standard' ('standard'|'tsf'). New columns token_results.tsf_strategy TEXT and tsf_judges TEXT (JSON). TSFService: run_panel(prompt_text, language, response_text, llm_service, judge_models) → {strategy, judges}; 3-judge majority vote (≥2/3) classifying into {keep_latin, transliterate, translate_semantic, mistranslate}; all-different (1-1-1) returns strategy=None. ExperimentModel: update_tsf(token_result_id, strategy, judges_json), get_prompt_analysis_type(prompt_id). QueueService: new operation 'tsf_classification' (timeout 90s); enqueued post-llm_call only when prompt.analysis_type='tsf'; uses same MAGI judge models (Balthasar/Caspar/Melchior) from settings. PromptModel.create/update accept analysis_type param. PromptController reads analysis_type from form (validated to 'standard'|'tsf'). update_notes preserves existing analysis_type. form.html: select for analysis_type with hint text. detail.html: TSF badge in page header when analysis_type='tsf'. ExportService: tsf_strategy added to CSV fieldnames; tsf_judges available in JSON export via token_results rows."
   }
+  ,
+  {
+    "task_id": "T040",
+    "title": "iRRT — intra-Run Response Time calculations",
+    "status": "completed",
+    "dependencies": ["T037"],
+    "affected_modules": ["ExperimentModel", "ExportService", "DatabaseManager"],
+    "affected_files": [
+      "agents/datastructure.md",
+      "app/__init__.py",
+      "app/models/experiment_model.py",
+      "app/services/export_service.py",
+      "app/services/llm_service.py"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "New derived fields (NOT stored, added in get_results_by_run() via _compute_irrt()): irrt_relative = TTFT / median(TTFT for this model in this run) — NULL if TTFT unavailable; irrt_absolute = TTFT / TTFT_expected where TTFT_expected = OLS(intercept + α·input_tokens + β·visible_output_tokens) calibrated on is_reasoning=0 rows (≥ 3 required). _IRRT_ABS_MIN_OBS = 3. Both exported in JSON export. LLMService timing improvements: streaming callbacks capture TTFT and completion timestamps with higher precision."
+  }
+  ,
+  {
+    "task_id": "T041",
+    "title": "Calibration battery, stream_close fix, timing invariant, retry/caching fields",
+    "status": "completed",
+    "dependencies": ["T040", "T022"],
+    "affected_modules": ["CalibrationService", "DatabaseManager", "ExperimentModel", "QueueService", "ExperimentController", "ExportService", "LLMService"],
+    "affected_files": [
+      "app/services/calibration_service.py",
+      "app/models/database.py",
+      "app/models/experiment_model.py",
+      "app/services/queue_service.py",
+      "app/controllers/experiment_controller.py",
+      "app/services/export_service.py",
+      "app/services/llm_service.py"
+    ],
+    "requires_db_changes": true,
+    "notes_for_agent": "P1 — Calibration battery: New tables calibration_prompts (4 hardcoded prompts seeded at bootstrap), calibration_translations (auto-translated once per language via cheapest-provider cascade), calibration_results (mirrors token_results schema plus baseline_quality). CalibrationService: CALIBRATION_PROMPTS, BASELINE_RATE_SLUGS, REASONING_TO_CALIBRATION_MODEL, resolve_calibration_model(), compute_baseline_quality() (clean/degraded/invalid; CLEAN_REASONING_THRESHOLD=30), get_or_create_calibration_translation(), compute_baseline_rates(), compute_prefix_caching_evidence(). New queue operation: calibration_llm_call (timeout 200s, priority 1 — before experimental llm_calls at priority 2). ExperimentModel: insert_calibration_result(), get_calibration_results_by_run(), get_all_calibration_prompts(). ExperimentController: enqueues calibration battery before main queue. Export JSON: new top-level keys calibration_results, baseline_rates, prefix_caching_evidence, timing_anomalies_count. P2 — Fix time_to_stream_close_ms: now cumulative from request start (t_done - t_req), not teardown delta. 100% coverage: fallback sets stream_close_ms = total_query_time_ms, marks stream_close_source='inferred'. check_timing_invariant() validates TTFT + completion ≤ stream_close ≤ total_query. New token_results column: stream_close_source TEXT NOT NULL DEFAULT 'native'. P3 — Retry-after tracking: new token_results columns had_retry_after INT DEFAULT 0, retry_after_sleep_ms INT DEFAULT 0, retry_count INT DEFAULT 0. P4 — Prefix-caching diagnostics: new columns request_timestamp_utc TEXT, cell_sequential_index INT."
+  }
+  ,
+  {
+    "task_id": "T042",
+    "title": "Enhanced token result validation + LER baseline tooltips in UI",
+    "status": "completed",
+    "dependencies": ["T027", "T008"],
+    "affected_modules": ["QueueModel", "Views"],
+    "affected_files": [
+      "app/models/queue_model.py",
+      "app/views/templates/reports/scores.html",
+      "app/views/templates/translations/compare.html",
+      "app/views/templates/translations/list.html"
+    ],
+    "requires_db_changes": false,
+    "notes_for_agent": "QueueModel._count_invalid_token_results() improved: now counts only cells whose LATEST attempt (MAX attempt_index per run×prompt×language×model×repetition) has response_valid=0. Superseded failed attempts from earlier retries are ignored, so a successful retry no longer leaves the run in 'partial' status. UI: LER tooltip added to three templates explaining that English is the baseline original (LER trivially 1.0 by definition) and LER columns/values are therefore absent/shown as — for English candidates."
+  }
 ]
 ```

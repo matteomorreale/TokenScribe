@@ -32,7 +32,8 @@ Services layer handles business logic; Controllers handle HTTP routing.
 - **SettingsController** — API keys (Fernet-encrypted at rest), model configuration (including Qwen region)
 - **ReportController** — export dataset, score visualizations, bulk delete runs
 - **LLMService** — unified interface to all providers (8 total: OpenAI, Anthropic, Google, DeepSeek, Meta, Qwen, Mistral, xAI); `TokenScribeCallResult` carries `model_not_found` and `rate_limited` flags; cross-provider 404/deprecation detection via `_is_model_not_found()`; Responses API fallback for non-chat OpenAI models
-- **QueueService** — daemon thread processing `run_queue` one item at a time; dispatches `llm_call`, `magi_phase2`, `compute_pei`, `finalize_pei_groups`, `snapshot_translations`; automatic tier-aware fallback on `model_not_found`; rate-limited items re-queued at tail via `requeue_at_end()` (up to 10 retries)
+- **QueueService** — daemon thread processing `run_queue` one item at a time; dispatches `llm_call`, `calibration_llm_call`, `magi_phase2`, `compute_pei`, `finalize_pei_groups`, `snapshot_translations`; automatic tier-aware fallback on `model_not_found`; rate-limited items re-queued at tail via `requeue_at_end()` (up to 10 retries)
+- **CalibrationService** — baseline streaming-rate calibration for iRRT; `CALIBRATION_PROMPTS` (4 hardcoded, immutable across runs); `resolve_calibration_model()` (Grok-reasoning swap, OpenAI minimum effort); `compute_baseline_quality()` (`clean|degraded|invalid`); `compute_baseline_rates()`; `compute_prefix_caching_evidence()`
 - **QueueModel** — CRUD for `run_queue`; dequeue / mark_done / mark_error / mark_timeout / cancel_pending_items / restart_stopped_run / reset_items_for_retry / recompute_run_status / get_run_repetitions
 - **ScoringService** — SFS (DSF+RTF), LER, PEI, MAGI Selection Score computation
 - **MAGIService** — three-judge LLM panel (Balthasar, Caspar, Melchior) with retry logic
@@ -103,6 +104,27 @@ The judge prompt asks for a single JSON object with the three dimension keys, st
   - `"anomaly"` — non-capable model yet reasoning tokens detected → WARNING logged
   - `"non_reasoning"` — non-capable model, no reasoning tokens
 - `response_valid` — `0` if response text is empty/blank or visible_output_tokens = 0; used by `recompute_run_status()` to detect partial completions
+  — `recompute_run_status()` now checks only the **latest** attempt per cell (`MAX(attempt_index)`) when counting invalid rows; a successful retry no longer leaves the run in `partial`
+- `stream_close_source` — `'native'` (measured cumulatively from request start) | `'inferred'` (set to `total_query_time_ms` for non-streaming fallback)
+  — Invariant: `TTFT + time_to_completion ≤ stream_close ≤ total_query_time`; validated by `check_timing_invariant()` in LLMService
+- `had_retry_after` — `1` if the provider returned a `Retry-After` header during this call
+- `retry_after_sleep_ms` — ms slept due to an explicit `Retry-After` header
+- `retry_count` — number of rate-limit requeue cycles before this result was committed
+- `request_timestamp_utc` — ISO timestamp (ms precision) of the LLM request; enables prefix-caching delta-TTFT analysis
+- `cell_sequential_index` — proxy for `repetition_index`; used by `compute_prefix_caching_evidence()`
+
+### iRRT — intra-Run Response Time (derived, not stored)
+
+- `irrt_relative = TTFT / median(TTFT for this model in this run)`
+  — `1.0` = typical latency for that model; `>1` = this trial was slower than the model's own intra-run baseline; `NULL` if TTFT unavailable
+- `irrt_absolute = TTFT / TTFT_expected`
+  — `TTFT_expected = intercept + α·input_tokens + β·visible_output_tokens` — OLS calibrated on `is_reasoning=0` rows within this run (≥ 3 observations required)
+  — `NULL` if TTFT unavailable or fewer than 3 non-reasoning rows exist
+  — Both computed in `_compute_irrt()` inside `ExperimentModel.get_results_by_run()` and added to every result row
+
+### Calibration Battery
+
+4 hardcoded prompts (cal_01_short, cal_02_medium, cal_03_long, cal_04_long_varied) translated once per language using a cheap model and stored in `calibration_translations`. For each run, `calibration_llm_call` queue items (priority 1 — run before experimental LLM calls at priority 2) are enqueued for every (calibration_prompt × language × model). Results stored in `calibration_results`; included in JSON export as `calibration_results`, `baseline_rates`, `prefix_caching_evidence`, `timing_anomalies_count`.
 
 Note: `visible_output_tokens` uses tiktoken (cl100k_base) for all models. For non-OpenAI models
 (e.g. Anthropic, DeepSeek), small non-zero `reasoning_tokens` may reflect tokenizer mismatch
@@ -221,7 +243,7 @@ and deactivated (`is_active=0`) in the DB to prevent them from appearing in the 
 - `token_results` rows are INSERT-only per (run, prompt, language, model, repetition_index, attempt_index); retries add a new row with incremented `attempt_index`
 - Prompt template: [Instruction] <<< [Input] >>> [Expected Output]
 - Schema migrations via `_migrate_schema()` in DatabaseManager using ALTER TABLE ADD COLUMN
-- Derived fields (`reasoning_tokens`, `ror`, `cost_visible_only`, `reasoning_observed`, `reasoning_state`, `response_valid`) are computed in Python inside `get_results_by_run()` — NOT stored in the DB
+- Derived fields (`reasoning_tokens`, `ror`, `cost_visible_only`, `reasoning_observed`, `reasoning_state`, `response_valid`, `irrt_relative`, `irrt_absolute`) are computed in Python inside `get_results_by_run()` — NOT stored in the DB
 - `magi_judges` is stored as JSON TEXT in DB; deserialized to dict in both
   `SelectionScoreModel.get_by_prompt()` and `ExperimentModel.get_translation_scores_by_run()`
   so templates and exports always receive a Python dict, never a raw string
