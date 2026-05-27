@@ -54,6 +54,13 @@ class ExportService:
                 scores_by_prompt_lang[(int(pid), int(lid))] = s
 
         output = io.StringIO()
+        # Metadata notes (lines prefixed with '#' are skipped by pandas read_csv(comment='#')
+        # and by most scientific data tools)
+        output.write(
+            "# NOTE [LER]: ler_char and ler_token are absent for language_code='en' by design.\n"
+            "#   LER = len(translation) / len(english_source). English is the baseline/original;\n"
+            "#   its ratio would be trivially 1.0 and carries no comparative information.\n"
+        )
         fieldnames = [
             "run_id", "prompt_id", "base_text", "category", "prompt_notes",
             "language_name", "language_code", "writing_system", "script_group", "morphology_group",
@@ -135,6 +142,8 @@ class ExportService:
         translation_scores: List[dict] = None,
         run_notes: str = None,
         cell_completeness: dict = None,
+        # Run 19 additions
+        calibration_results: List[dict] = None,
     ) -> str:
         """Convert results to a structured JSON dataset."""
         cc = cell_completeness or {}
@@ -160,6 +169,26 @@ class ExportService:
             enriched["cell_actual_reps"] = actual
             enriched_results.append(enriched)
 
+        # --- Run 19: calibration analytics ---
+        cal_results = calibration_results or []
+
+        # baseline_rates: per (model, language) token rate from clean calibration trials
+        from app.services.calibration_service import (
+            compute_baseline_rates,
+            compute_prefix_caching_evidence,
+        )
+        baseline_rates = compute_baseline_rates(cal_results)
+
+        # prefix_caching_evidence: from experimental results (repetition order vs TTFT)
+        prefix_caching_evidence = compute_prefix_caching_evidence(enriched_results)
+
+        # timing_anomalies_count: per model, count of timing_anomaly=True in token_results
+        timing_anomalies: dict[str, int] = {}
+        for r in enriched_results:
+            if r.get("timing_anomaly"):
+                mn = r.get("model_name", "unknown")
+                timing_anomalies[mn] = timing_anomalies.get(mn, 0) + 1
+
         dataset = {
             "_notes": {
                 "pei": (
@@ -168,10 +197,41 @@ class ExportService:
                     "Identical PEI values across runs using different LLMs is expected and correct — "
                     "PEI changes only when the set of approved translations changes."
                 ),
+                "ler": (
+                    "LER (Lexical Expansion Ratio) is defined as len(translation) / len(original_english). "
+                    "English (code 'en') is the baseline/original text and is therefore absent from LER columns: "
+                    "its ratio would be trivially 1.0 by definition and carries no comparative information. "
+                    "All other languages are measured relative to the English source."
+                ),
                 "cell_completeness": (
                     "cell_expected_reps / cell_actual_reps on each token_result row indicate "
                     "how many successful repetitions the cell (prompt × language × model) has. "
                     "Cells with actual_reps < expected_reps are also listed in cell_completeness.incomplete_cells."
+                ),
+                "calibration_results": (
+                    "4 fixed calibration prompts run before experimental prompts. "
+                    "Used to estimate per-(model, language) baseline streaming rate for iRRT. "
+                    "Stored separately from token_results — never included in PEI/MAGI aggregates."
+                ),
+                "baseline_rates": (
+                    "Per-(model, language) token/sec rate derived from cal_03_long and cal_04_long_varied, "
+                    "baseline_quality='clean' trials only. "
+                    "baseline_quality='degraded' entries are listed but should be excluded from iRRT calibration."
+                ),
+                "prefix_caching_evidence": (
+                    "Heuristic: median(TTFT rep=0) - median(TTFT rep=max) per cell. "
+                    "Positive delta_ttft_first_vs_last_ms_median suggests server-side prefix caching. "
+                    "Based on repetition_index order (proxy for execution order with parallel workers)."
+                ),
+                "timing_anomalies_count": (
+                    "Count of token_result rows per model where the timing invariant "
+                    "(0 < TTFT ≤ TTFT+completion ≤ stream_close ≤ total_query_time) was violated. "
+                    "These rows have timing_anomaly=true in token_results."
+                ),
+                "stream_close_source": (
+                    "'native' = time_to_stream_close_ms measured from actual stream close event; "
+                    "'inferred' = set equal to total_query_time_ms (non-streaming provider or fallback). "
+                    "Exclude 'inferred' rows from analyses that rely on pure stream_close values."
                 ),
             },
             "run_notes": run_notes or "",
@@ -180,6 +240,11 @@ class ExportService:
             "pei_results": pei_results or [],
             "pei_group_results": pei_group_results or [],
             "translation_scores": translation_scores or [],
+            # Run 19 additions
+            "calibration_results": cal_results,
+            "baseline_rates": baseline_rates,
+            "prefix_caching_evidence": prefix_caching_evidence,
+            "timing_anomalies_count": timing_anomalies,
         }
         return json.dumps(dataset, indent=2, ensure_ascii=False)
 

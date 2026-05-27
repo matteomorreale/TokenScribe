@@ -294,6 +294,82 @@ def new_experiment(study_id: int):
         flash(f"{ne_label_count} MAGI NE labeling operations queued.", "info")
 
     # ------------------------------------------------------------------
+    # 3b. Calibration battery (priority 1) — runs before experimental LLM calls
+    #     4 fixed prompts × all languages × all selected models × expected_reps
+    #     Stored in calibration_results (not token_results) — never pollutes PEI/MAGI.
+    # ------------------------------------------------------------------
+    from app.services.calibration_service import CALIBRATION_PROMPTS
+    cal_prompts_db = em.get_all_calibration_prompts()
+    cal_prompt_by_slug = {p["slug"]: p for p in cal_prompts_db}
+    cal_item_count = 0
+
+    # Collect all languages for this run (English + approved translations)
+    cal_languages: dict[int, dict] = {
+        english_language_id: {
+            "language_id":      english_language_id,
+            "language_name":    english.get("name") or "English",
+            "language_code":    english.get("code") or "en",
+        }
+    }
+    for prompt in prompts:
+        for t in _tm().get_approved_by_prompt(prompt["id"]):
+            lid = int(t["language_id"])
+            if lid != english_language_id and lid not in cal_languages:
+                cal_languages[lid] = {
+                    "language_id":   lid,
+                    "language_name": t.get("language_name") or "",
+                    "language_code": t.get("language_code") or "",
+                }
+
+    for cal_p in CALIBRATION_PROMPTS:
+        db_row = cal_prompt_by_slug.get(cal_p["slug"])
+        if not db_row:
+            continue  # shouldn't happen after bootstrap, but guard anyway
+        cal_prompt_id = db_row["id"]
+
+        for lang_info in cal_languages.values():
+            for model_id in selected_model_ids:
+                model_info = em.get_model_by_id(model_id)
+                if not model_info:
+                    continue
+                for rep in range(repetitions_per_cell):
+                    qm.enqueue(
+                        run_id=run_id,
+                        operation_type="calibration_llm_call",
+                        item_key=(
+                            f"cal:cp{cal_prompt_id}"
+                            f":l{lang_info['language_id']}"
+                            f":m{model_id}:r{rep}"
+                        ),
+                        payload={
+                            "run_id":                 run_id,
+                            "calibration_prompt_id":  cal_prompt_id,
+                            "cal_prompt_slug":        cal_p["slug"],
+                            "text_en":                cal_p["text_en"],
+                            "language_id":            lang_info["language_id"],
+                            "language_name":          lang_info["language_name"],
+                            "language_code":          lang_info["language_code"],
+                            "model_id":               model_id,
+                            "provider":               model_info["provider_name"],
+                            "model_name":             model_info["name"],
+                            "cost_per_input":         model_info.get("cost_per_input_token", 0.0) or 0.0,
+                            "cost_per_output":        model_info.get("cost_per_output_token", 0.0) or 0.0,
+                            "is_reasoning":           bool(model_info.get("is_reasoning", 0)),
+                            "repetition_index":       rep,
+                        },
+                        priority=1,   # before experimental LLM calls (priority 2)
+                    )
+                    cal_item_count += 1
+
+    if cal_item_count > 0:
+        flash(
+            f"{cal_item_count} calibration trials queued "
+            f"({len(CALIBRATION_PROMPTS)} prompts × {len(cal_languages)} languages × "
+            f"{len(selected_model_ids)} models × {repetitions_per_cell} reps).",
+            "info",
+        )
+
+    # ------------------------------------------------------------------
     # 4. LLM calls (priority 2) — repetitions_per_cell items per prompt × model × language
     # ------------------------------------------------------------------
     llm_item_count = 0
@@ -377,7 +453,7 @@ def new_experiment(study_id: int):
         priority=4,
     )
 
-    total_items = 1 + magi_queued_count + ne_label_count + llm_item_count + len(prompts) + 1
+    total_items = 1 + magi_queued_count + ne_label_count + cal_item_count + llm_item_count + len(prompts) + 1
     flash(
         f"Experiment run #{run_id} started — {total_items} operations queued.",
         "success",

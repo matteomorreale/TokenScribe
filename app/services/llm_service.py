@@ -9,15 +9,19 @@ All calls return a TokenScribeCallResult with token counts, cost, and timing met
 Optional LogService injection: pass log_service= to __init__ to enable non-blocking
 operation logging. Each call records provider, model, tokens, cost, duration, response.
 
-Timing fields in TokenScribeCallResult:
-  total_query_time_ms      — wall time of the API call itself (always set);
-                             for Anthropic this is measured from after semaphore
-                             acquisition so it excludes queue-wait overhead
-  time_to_first_token_ms   — latency until first streamed token chunk (streaming providers only)
-  time_to_completion_ms    — time from first token to last received chunk (streaming providers only)
-  time_to_stream_close_ms  — time from last chunk to stream/connection close, including
-                             get_final_message(); Anthropic only; isolates connection-teardown
-                             overhead from pure generation time
+Timing fields in TokenScribeCallResult (ALL are cumulative deltas from request_start):
+  total_query_time_ms      — wall time of the API call itself (always set)
+  time_to_first_token_ms   — ms from request_start to first streamed token
+  time_to_completion_ms    — ms from first token to last received chunk (NOT cumulative;
+                             kept as duration so TTFT + completion = time to last chunk)
+  time_to_stream_close_ms  — ms from request_start to stream/connection close (cumulative,
+                             always set; 'inferred' from total_query_time for non-streaming)
+  stream_close_source      — 'native' if measured from actual stream close event,
+                             'inferred' if set equal to total_query_time_ms (non-streaming
+                             fallback or providers that buffer the full response)
+
+Timing invariant (enforced at insert time; violations logged as timing_anomaly=True):
+  0 < TTFT ≤ TTFT + completion ≤ stream_close ≤ total_query_time
 """
 
 import threading
@@ -96,6 +100,39 @@ def _is_timeout(error_str: str) -> bool:
     )
 
 
+def check_timing_invariant(result: "TokenScribeCallResult") -> bool:
+    """Return True if all timing fields satisfy the required invariant.
+
+    Invariant (all values in ms, cumulative from request_start):
+        0 < TTFT ≤ TTFT + completion ≤ stream_close ≤ total_query_time
+
+    Returns False (anomaly) when:
+    - Any required field is negative or zero
+    - TTFT + completion > stream_close  (the known Run 18 bug before this fix)
+    - stream_close > total_query_time
+
+    Returns True (no anomaly) when any of the four fields is None, because
+    absence of a field is not the same as a timing violation.
+    """
+    ttft   = result.time_to_first_token_ms
+    comp   = result.time_to_completion_ms
+    sc     = result.time_to_stream_close_ms
+    tqt    = result.total_query_time_ms
+
+    if any(v is None for v in (ttft, comp, sc, tqt)):
+        return True  # cannot evaluate — not an anomaly
+
+    if ttft <= 0:
+        return False
+    if comp < 0:
+        return False
+    if ttft + comp > sc:
+        return False
+    if sc > tqt:
+        return False
+    return True
+
+
 @dataclass
 class TokenScribeCallResult:
     """Result of a single LLM API call."""
@@ -110,13 +147,17 @@ class TokenScribeCallResult:
     model_not_found: bool = False
     rate_limited: bool = False
     timed_out: bool = False
-    # Timing (milliseconds). total_query_time_ms is always set; TTFT,
-    # time_to_completion, and time_to_stream_close are streaming-only.
-    # For Anthropic: total ≈ ttft + completion + stream_close.
+    # Timing (milliseconds).
+    # total_query_time_ms is always set by LLMService.call() from the outer wall clock.
+    # TTFT and completion are streaming-only (None for non-streaming fallback).
+    # stream_close_ms is always set (native or inferred from total_query_time_ms).
     total_query_time_ms: Optional[int] = None
     time_to_first_token_ms: Optional[int] = None
     time_to_completion_ms: Optional[int] = None
     time_to_stream_close_ms: Optional[int] = None
+    # 'native' = measured from actual stream close event;
+    # 'inferred' = set equal to total_query_time_ms (non-streaming or no stream events).
+    stream_close_source: str = "native"
 
 
 class LLMService:
@@ -186,6 +227,14 @@ class LLMService:
         # Other handlers leave it None, so we fill it from the outer wall clock.
         if result.total_query_time_ms is None:
             result.total_query_time_ms = duration_ms
+
+        # Guarantee 100% stream_close coverage (Run 19 requirement):
+        # When a provider buffers the full response (no streaming) or streaming
+        # failed and fell back to batch, time_to_stream_close_ms is None.
+        # In that case, set it equal to total_query_time_ms and mark as 'inferred'.
+        if result.time_to_stream_close_ms is None:
+            result.time_to_stream_close_ms = result.total_query_time_ms
+            result.stream_close_source = "inferred"
 
         if result.success:
             result.cost = (
@@ -286,13 +335,27 @@ class LLMService:
 
     @staticmethod
     def _timing_from_stream(t_req, t_first, t_last, t_done):
-        """Compute (ttft_ms, completion_ms, stream_close_ms) from raw timestamps."""
+        """Compute (ttft_ms, completion_ms, stream_close_ms) from raw timestamps.
+
+        All three values are deltas from t_req (request_start), ensuring the invariant:
+            0 < TTFT ≤ TTFT + completion ≤ stream_close ≤ total_query_time
+
+        - ttft_ms       : t_first - t_req  (latency to first token)
+        - completion_ms : t_last  - t_first (generation duration, not cumulative from t_req)
+        - stream_close_ms: t_done - t_req   (cumulative from t_req; includes teardown)
+
+        TTFT + completion = (t_first - t_req) + (t_last - t_first) = t_last - t_req
+        stream_close      = t_done - t_req ≥ t_last - t_req → invariant holds ✓
+
+        Returns (None, None, None) when no content tokens were streamed.
+        In that case the caller sets stream_close_ms via the outer inferred fallback.
+        """
         if t_first is None or t_last is None:
             return None, None, None
         return (
             int((t_first - t_req) * 1000),
             int((t_last - t_first) * 1000),
-            int((t_done - t_last) * 1000),
+            int((t_done - t_req) * 1000),   # FIX: cumulative from t_req, not from t_last
         )
 
     # ------------------------------------------------------------------
@@ -432,19 +495,24 @@ class LLMService:
                 # get_final_message() + connection teardown separately from generation.
                 t_done = time.monotonic()
 
-                ttft_ms = int((t_first - t_req) * 1000) if t_first else None
-                completion_ms = int((t_last - t_first) * 1000) if t_first else None
-                stream_close_ms = int((t_done - (t_last or t_req)) * 1000)
+                ttft_ms        = int((t_first - t_req) * 1000) if t_first else None
+                completion_ms  = int((t_last  - t_first) * 1000) if t_first else None
+                # stream_close_ms = cumulative from t_req (NOT delta from t_last).
+                # This ensures: TTFT + completion ≤ stream_close ≤ total_query_time.
+                # When t_first is None (empty stream), outer inferred fallback covers it.
+                stream_close_ms = int((t_done - t_req) * 1000) if t_first else None
+                total_ms        = int((t_done - t_req) * 1000)
 
                 return TokenScribeCallResult(
                     input_tokens=final_msg.usage.input_tokens,
                     output_tokens=final_msg.usage.output_tokens,
                     response_text="".join(text_parts),
                     source="api_reported",
-                    total_query_time_ms=int((t_done - t_req) * 1000),
+                    total_query_time_ms=total_ms,
                     time_to_first_token_ms=ttft_ms,
                     time_to_completion_ms=completion_ms,
                     time_to_stream_close_ms=stream_close_ms,
+                    stream_close_source="native" if t_first else "inferred",
                 )
             except Exception as e:
                 err = str(e)

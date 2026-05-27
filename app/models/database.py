@@ -44,6 +44,7 @@ class DatabaseManager:
             self._seed_languages(conn)
             self._seed_providers(conn)
             self._backfill_model_costs(conn)
+            self._seed_calibration_prompts(conn)
             conn.commit()
         finally:
             conn.close()
@@ -299,6 +300,44 @@ class DatabaseManager:
                 conn.execute("ALTER TABLE token_results ADD COLUMN tsf_strategy TEXT")
             if "tsf_judges" not in columns:
                 conn.execute("ALTER TABLE token_results ADD COLUMN tsf_judges TEXT")
+        except sqlite3.Error:
+            pass
+
+        # Run 19: timing quality fields (P2 stream_close fix, P3 retry, P4 caching)
+        try:
+            cur = conn.execute("PRAGMA table_info(token_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            # P2: timing anomaly flag (invariant violation) + stream_close provenance
+            if "timing_anomaly" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN timing_anomaly INTEGER NOT NULL DEFAULT 0"
+                )
+            if "stream_close_source" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN stream_close_source TEXT NOT NULL DEFAULT 'native'"
+                )
+            # P3: explicit retry-after tracking
+            if "had_retry_after" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN had_retry_after INTEGER NOT NULL DEFAULT 0"
+                )
+            if "retry_after_sleep_ms" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN retry_after_sleep_ms INTEGER NOT NULL DEFAULT 0"
+                )
+            if "retry_count" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
+                )
+            # P4: prefix-caching diagnostics
+            if "request_timestamp_utc" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN request_timestamp_utc TEXT"
+                )
+            if "cell_sequential_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE token_results ADD COLUMN cell_sequential_index INTEGER"
+                )
         except sqlite3.Error:
             pass
 
@@ -637,6 +676,68 @@ class DatabaseManager:
                 computed_at  TEXT,
                 PRIMARY KEY (prompt_id, language_id)
             );
+
+            -- calibration_prompts: 4 hardcoded baseline prompts (immutable across runs)
+            CREATE TABLE IF NOT EXISTS calibration_prompts (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug              TEXT NOT NULL UNIQUE,
+                text_en           TEXT NOT NULL,
+                target_tokens_min INTEGER,
+                target_tokens_max INTEGER,
+                created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+            );
+
+            -- calibration_translations: auto-translated calibration prompts per language
+            -- Translated once per (prompt, language) pair, reused across runs.
+            CREATE TABLE IF NOT EXISTS calibration_translations (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                calibration_prompt_id INTEGER NOT NULL REFERENCES calibration_prompts(id),
+                language_id           INTEGER NOT NULL REFERENCES languages(id),
+                text                  TEXT NOT NULL,
+                created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                UNIQUE(calibration_prompt_id, language_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_caltrans_prompt_lang
+                ON calibration_translations(calibration_prompt_id, language_id);
+
+            -- calibration_results: token-level records for calibration trials.
+            -- Schema mirrors token_results but references calibration_prompts instead of prompts.
+            -- Kept separate so they never pollute PEI / MAGI aggregates.
+            CREATE TABLE IF NOT EXISTS calibration_results (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id                INTEGER NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+                calibration_prompt_id INTEGER NOT NULL REFERENCES calibration_prompts(id),
+                language_id           INTEGER NOT NULL REFERENCES languages(id),
+                model_id              INTEGER NOT NULL REFERENCES models(id),
+                repetition_index      INTEGER NOT NULL DEFAULT 0,
+                attempt_index         INTEGER NOT NULL DEFAULT 0,
+                attempt_status        TEXT NOT NULL DEFAULT 'success',
+                input_tokens          INTEGER NOT NULL DEFAULT 0,
+                output_tokens         INTEGER NOT NULL DEFAULT 0,
+                visible_output_tokens INTEGER,
+                api_reported_output_tokens INTEGER,
+                reasoning_tokens      INTEGER NOT NULL DEFAULT 0,
+                time_to_first_token_ms  INTEGER,
+                time_to_completion_ms   INTEGER,
+                total_query_time_ms     INTEGER,
+                time_to_stream_close_ms INTEGER,
+                stream_close_source     TEXT NOT NULL DEFAULT 'native',
+                timing_anomaly          INTEGER NOT NULL DEFAULT 0,
+                response_text           TEXT,
+                baseline_quality        TEXT NOT NULL DEFAULT 'clean',
+                had_retry_after         INTEGER NOT NULL DEFAULT 0,
+                retry_after_sleep_ms    INTEGER NOT NULL DEFAULT 0,
+                retry_count             INTEGER NOT NULL DEFAULT 0,
+                request_timestamp_utc   TEXT,
+                cell_sequential_index   INTEGER,
+                created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                UNIQUE(run_id, calibration_prompt_id, language_id, model_id,
+                       repetition_index, attempt_index)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_calres_run_id   ON calibration_results(run_id);
+            CREATE INDEX IF NOT EXISTS idx_calres_model_id ON calibration_results(model_id);
         """)
 
     def _seed_writing_systems(self, conn: sqlite3.Connection):
@@ -723,6 +824,17 @@ class DatabaseManager:
                              AND cost_per_output_token = 0.0""",
                         (cpi, cpo, m["name"]),
                     )
+
+    def _seed_calibration_prompts(self, conn: sqlite3.Connection):
+        """Insert the 4 hardcoded calibration prompts (idempotent via INSERT OR IGNORE)."""
+        from app.services.calibration_service import CALIBRATION_PROMPTS
+        for p in CALIBRATION_PROMPTS:
+            conn.execute(
+                """INSERT OR IGNORE INTO calibration_prompts
+                   (slug, text_en, target_tokens_min, target_tokens_max)
+                   VALUES (?, ?, ?, ?)""",
+                (p["slug"], p["text_en"], p["target_tokens_min"], p["target_tokens_max"]),
+            )
 
     # ------------------------------------------------------------------
     # Utility helpers

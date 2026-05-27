@@ -244,6 +244,14 @@ class ExperimentModel:
         time_to_first_token_ms: int = None,
         time_to_completion_ms: int = None,
         time_to_stream_close_ms: int = None,
+        # Run 19 new fields
+        timing_anomaly: bool = False,
+        stream_close_source: str = "native",
+        had_retry_after: bool = False,
+        retry_after_sleep_ms: int = 0,
+        retry_count: int = 0,
+        request_timestamp_utc: str = None,
+        cell_sequential_index: int = None,
     ) -> int:
         """Insert a token result row. attempt_index is computed atomically via a
         MAX+1 subquery so that concurrent retries never collide on the unique key."""
@@ -261,6 +269,11 @@ class ExperimentModel:
             else:
                 rv = 1 if response_valid else 0
 
+            # cell_sequential_index defaults to repetition_index (approximation;
+            # actual execution order may differ with parallel workers).
+            if cell_sequential_index is None:
+                cell_sequential_index = repetition_index
+
             cur = conn.execute(
                 """INSERT INTO token_results
                    (run_id, prompt_id, language_id, model_id,
@@ -271,7 +284,10 @@ class ExperimentModel:
                     repetition_index, attempt_index, attempt_status,
                     reasoning_override_requested,
                     total_query_time_ms, time_to_first_token_ms, time_to_completion_ms,
-                    time_to_stream_close_ms)
+                    time_to_stream_close_ms,
+                    timing_anomaly, stream_close_source,
+                    had_retry_after, retry_after_sleep_ms, retry_count,
+                    request_timestamp_utc, cell_sequential_index)
                    SELECT ?, ?, ?, ?,
                           ?, ?,
                           ?, ?,
@@ -284,7 +300,11 @@ class ExperimentModel:
                                       AND t2.model_id=? AND t2.repetition_index=?), 0),
                           ?,
                           ?,
-                          ?, ?, ?, ?""",
+                          ?, ?, ?,
+                          ?,
+                          ?, ?,
+                          ?, ?, ?,
+                          ?, ?""",
                 (run_id, prompt_id, language_id, model_id,
                  input_tokens, output_tokens,
                  visible_output_text_length, api_reported_output_tokens,
@@ -295,7 +315,10 @@ class ExperimentModel:
                  attempt_status,
                  reasoning_override_requested,
                  total_query_time_ms, time_to_first_token_ms, time_to_completion_ms,
-                 time_to_stream_close_ms),
+                 time_to_stream_close_ms,
+                 1 if timing_anomaly else 0, stream_close_source,
+                 1 if had_retry_after else 0, retry_after_sleep_ms, retry_count,
+                 request_timestamp_utc, cell_sequential_index),
             )
             conn.commit()
             return cur.lastrowid
@@ -353,6 +376,150 @@ class ExperimentModel:
                 (strategy, judges_json, token_result_id),
             )
             conn.commit()
+        finally:
+            conn.close()
+
+    # --- Calibration results ---
+
+    def insert_calibration_result(
+        self,
+        run_id: int,
+        calibration_prompt_id: int,
+        language_id: int,
+        model_id: int,
+        input_tokens: int,
+        output_tokens: int,
+        visible_output_tokens: int = None,
+        api_reported_output_tokens: int = None,
+        reasoning_tokens: int = 0,
+        time_to_first_token_ms: int = None,
+        time_to_completion_ms: int = None,
+        total_query_time_ms: int = None,
+        time_to_stream_close_ms: int = None,
+        stream_close_source: str = "native",
+        timing_anomaly: bool = False,
+        response_text: str = None,
+        baseline_quality: str = "clean",
+        attempt_status: str = "success",
+        had_retry_after: bool = False,
+        retry_after_sleep_ms: int = 0,
+        retry_count: int = 0,
+        request_timestamp_utc: str = None,
+        cell_sequential_index: int = None,
+        repetition_index: int = 0,
+    ) -> int:
+        """Insert a calibration result row. attempt_index computed atomically."""
+        conn = self.db.get_connection()
+        try:
+            if cell_sequential_index is None:
+                cell_sequential_index = repetition_index
+            if api_reported_output_tokens is None:
+                api_reported_output_tokens = output_tokens
+            if visible_output_tokens is None:
+                visible_output_tokens = max(0, output_tokens - reasoning_tokens)
+
+            cur = conn.execute(
+                """INSERT INTO calibration_results
+                   (run_id, calibration_prompt_id, language_id, model_id,
+                    repetition_index, attempt_index, attempt_status,
+                    input_tokens, output_tokens,
+                    visible_output_tokens, api_reported_output_tokens, reasoning_tokens,
+                    time_to_first_token_ms, time_to_completion_ms,
+                    total_query_time_ms, time_to_stream_close_ms,
+                    stream_close_source, timing_anomaly, response_text,
+                    baseline_quality,
+                    had_retry_after, retry_after_sleep_ms, retry_count,
+                    request_timestamp_utc, cell_sequential_index)
+                   SELECT ?, ?, ?, ?,
+                          ?,
+                          COALESCE((SELECT MAX(c2.attempt_index) + 1
+                                    FROM calibration_results c2
+                                    WHERE c2.run_id=? AND c2.calibration_prompt_id=?
+                                      AND c2.language_id=? AND c2.model_id=?
+                                      AND c2.repetition_index=?), 0),
+                          ?,
+                          ?, ?,
+                          ?, ?, ?,
+                          ?, ?,
+                          ?, ?,
+                          ?, ?, ?,
+                          ?,
+                          ?, ?, ?,
+                          ?, ?""",
+                (run_id, calibration_prompt_id, language_id, model_id,
+                 repetition_index,
+                 run_id, calibration_prompt_id, language_id, model_id, repetition_index,
+                 attempt_status,
+                 input_tokens, output_tokens,
+                 visible_output_tokens, api_reported_output_tokens, reasoning_tokens,
+                 time_to_first_token_ms, time_to_completion_ms,
+                 total_query_time_ms, time_to_stream_close_ms,
+                 stream_close_source, 1 if timing_anomaly else 0, response_text,
+                 baseline_quality,
+                 1 if had_retry_after else 0, retry_after_sleep_ms, retry_count,
+                 request_timestamp_utc, cell_sequential_index),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_calibration_results_by_run(self, run_id: int) -> list[dict]:
+        """Return all calibration results for a run, enriched with model/language/prompt metadata."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT
+                       cr.*,
+                       cp.slug      AS cal_prompt_slug,
+                       cp.text_en   AS cal_prompt_text_en,
+                       cp.target_tokens_min,
+                       cp.target_tokens_max,
+                       l.name       AS language_name,
+                       l.code       AS language_code,
+                       l.script_group,
+                       l.morphology_group,
+                       ws.name      AS writing_system,
+                       m.name       AS model_name,
+                       m.is_reasoning AS is_reasoning_capable,
+                       p.name       AS provider_name
+                   FROM calibration_results cr
+                   JOIN calibration_prompts cp ON cp.id = cr.calibration_prompt_id
+                   JOIN languages l            ON l.id  = cr.language_id
+                   JOIN writing_systems ws     ON ws.id = l.writing_system_id
+                   JOIN models m               ON m.id  = cr.model_id
+                   JOIN providers p            ON p.id  = m.provider_id
+                   WHERE cr.run_id = ?
+                   ORDER BY cp.id, l.name, m.name, cr.repetition_index""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_calibration_translation(
+        self, calibration_prompt_id: int, language_id: int
+    ) -> str | None:
+        """Return stored calibration translation text, or None if not yet translated."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                """SELECT text FROM calibration_translations
+                   WHERE calibration_prompt_id=? AND language_id=?""",
+                (calibration_prompt_id, language_id),
+            ).fetchone()
+            return row["text"] if row else None
+        finally:
+            conn.close()
+
+    def get_all_calibration_prompts(self) -> list[dict]:
+        """Return all calibration prompts ordered by id."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM calibration_prompts ORDER BY id"
+            ).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 

@@ -46,6 +46,7 @@ _TIMEOUTS = {
     "snapshot_translations":  15,
     "magi_phase2":           150,
     "llm_call":              150,
+    "calibration_llm_call":  200,   # longer: includes inline translation if needed
     "magi_answer_discovery":  60,
     "magi_ne_labeling":       60,
     "tsf_classification":     90,
@@ -122,8 +123,13 @@ class QueueService:
                 run_id   = item["run_id"]
                 item_id  = item["id"]
                 op_type  = item["operation_type"]
-                payload  = item["payload"]
                 timeout  = _TIMEOUTS.get(op_type, 120)
+
+                # Inject queue-level retry_count into payload (in-memory only, not stored)
+                # so _exec_llm_call / _exec_calibration_llm_call can populate the
+                # retry_count field on the token_result / calibration_result row.
+                payload  = dict(item["payload"])
+                payload["_queue_retry_count"] = int(item.get("retry_count") or 0)
 
                 logger.info("Queue: processing item %d run=%d op=%s", item_id, run_id, op_type)
                 qm.update_run_status(run_id, RUN_RUNNING)
@@ -201,6 +207,7 @@ class QueueService:
             "snapshot_translations":  self._exec_snapshot,
             "magi_phase2":            self._exec_magi_phase2,
             "llm_call":               self._exec_llm_call,
+            "calibration_llm_call":   self._exec_calibration_llm_call,
             "magi_answer_discovery":  self._exec_magi_answer_discovery,
             "magi_ne_labeling":       self._exec_magi_ne_labeling,
             "tsf_classification":     self._exec_tsf_classification,
@@ -322,12 +329,17 @@ class QueueService:
             conn.close()
 
     def _exec_llm_call(self, payload: dict) -> None:
-        from app.services.llm_service import LLMService
+        import datetime as _dt
+        from app.services.llm_service import LLMService, check_timing_invariant
 
         run_id      = int(payload["run_id"])
         prompt_id   = int(payload["prompt_id"])
         language_id = int(payload["language_id"])
         model_id    = int(payload["model_id"])
+
+        # P3: queue-level retry count (injected by _worker_loop, not stored in DB payload)
+        retry_count = int(payload.get("_queue_retry_count") or 0)
+        had_retry_after = retry_count > 0
 
         settings = SettingsModel(self._db, crypto=self._crypto).get_all()
         llm      = LLMService(settings, log_service=self._log)
@@ -360,6 +372,9 @@ class QueueService:
             "language_code": payload.get("language_code", ""),
         }
         repetition_index = int(payload.get("repetition_index", 0))
+
+        # P4: capture request timestamp (ms precision) before the LLM call
+        request_ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
         result = llm.call(
             provider=payload["provider"],
@@ -394,6 +409,17 @@ class QueueService:
                 elif result.rate_limited or result.timed_out:
                     raise RateLimitError(result.error)
 
+        # P2: check timing invariant; log warning on violation
+        timing_ok = check_timing_invariant(result)
+        if not timing_ok:
+            logger.warning(
+                "Timing invariant violated: run=%d prompt=%d lang=%d model=%d "
+                "ttft=%s comp=%s sc=%s tqt=%s",
+                run_id, prompt_id, language_id, model_id,
+                result.time_to_first_token_ms, result.time_to_completion_ms,
+                result.time_to_stream_close_ms, result.total_query_time_ms,
+            )
+
         # model_id is now final (possibly updated to fallback). attempt_index is
         # computed atomically inside insert_token_result via a MAX+1 subquery.
         if not result.success:
@@ -414,6 +440,12 @@ class QueueService:
                 time_to_first_token_ms=result.time_to_first_token_ms,
                 time_to_completion_ms=result.time_to_completion_ms,
                 time_to_stream_close_ms=result.time_to_stream_close_ms,
+                timing_anomaly=not timing_ok,
+                stream_close_source=result.stream_close_source,
+                had_retry_after=had_retry_after,
+                retry_count=retry_count,
+                request_timestamp_utc=request_ts,
+                cell_sequential_index=repetition_index,
             )
             raise RuntimeError(f"LLM call failed: {result.error}")
 
@@ -484,6 +516,13 @@ class QueueService:
             time_to_first_token_ms=result.time_to_first_token_ms,
             time_to_completion_ms=result.time_to_completion_ms,
             time_to_stream_close_ms=result.time_to_stream_close_ms,
+            # Run 19 new fields
+            timing_anomaly=not timing_ok,
+            stream_close_source=result.stream_close_source,
+            had_retry_after=had_retry_after,
+            retry_count=retry_count,
+            request_timestamp_utc=request_ts,
+            cell_sequential_index=repetition_index,
         )
 
         if is_valid and row_id:
@@ -595,6 +634,162 @@ class QueueService:
                     },
                 )
             raise RuntimeError(msg)
+
+    def _exec_calibration_llm_call(self, payload: dict) -> None:
+        """Execute one calibration trial.
+
+        If the calibration prompt translation for the target language does not exist yet,
+        it is created inline (auto-translation via cheapest available provider, no MAGI).
+
+        Payload keys (set by experiment_controller):
+            run_id, calibration_prompt_id, cal_prompt_slug, text_en,
+            language_id, language_name, language_code,
+            model_id, provider, model_name,
+            cost_per_input, cost_per_output, is_reasoning,
+            repetition_index
+        """
+        import datetime as _dt
+        from app.services.llm_service import LLMService, check_timing_invariant
+        from app.services.calibration_service import (
+            get_or_create_calibration_translation,
+            resolve_calibration_model,
+            compute_baseline_quality,
+        )
+
+        run_id                = int(payload["run_id"])
+        calibration_prompt_id = int(payload["calibration_prompt_id"])
+        language_id           = int(payload["language_id"])
+        model_id              = int(payload["model_id"])
+        language_code         = payload.get("language_code", "")
+        language_name         = payload.get("language_name", "")
+        text_en               = payload.get("text_en", "")
+        provider              = payload["provider"]
+        model_name_orig       = payload["model_name"]
+        is_reasoning_orig     = bool(payload.get("is_reasoning", False))
+        repetition_index      = int(payload.get("repetition_index", 0))
+        retry_count           = int(payload.get("_queue_retry_count") or 0)
+
+        settings = SettingsModel(self._db, crypto=self._crypto).get_all()
+        llm      = LLMService(settings, log_service=self._log)
+        em       = ExperimentModel(self._db)
+
+        # Step 1: Resolve model + reasoning override for calibration
+        eff_model, eff_is_reasoning, reasoning_explicitly_disabled = resolve_calibration_model(
+            model_name=model_name_orig,
+            is_reasoning=is_reasoning_orig,
+            provider=provider,
+        )
+
+        # Step 2: Get or create the translation for the target language
+        prompt_text = get_or_create_calibration_translation(
+            db=self._db,
+            calibration_prompt_id=calibration_prompt_id,
+            language_id=language_id,
+            language_code=language_code,
+            language_name=language_name,
+            text_en=text_en,
+            llm_service=llm,
+            settings=settings,
+        )
+        if not prompt_text:
+            raise RuntimeError(
+                f"Could not obtain calibration translation: "
+                f"prompt_id={calibration_prompt_id} lang={language_name}"
+            )
+
+        # Step 3: Run the LLM call
+        llm_ctx = {
+            "operation_type": "calibration",
+            "run_id": run_id,
+            "calibration_prompt_id": calibration_prompt_id,
+            "language": language_name,
+        }
+        request_ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+
+        result = llm.call(
+            provider=provider,
+            model_name=eff_model,
+            prompt_text=prompt_text,
+            cost_per_input=float(payload.get("cost_per_input") or 0.0),
+            cost_per_output=float(payload.get("cost_per_output") or 0.0),
+            is_reasoning=eff_is_reasoning,
+            _ctx=llm_ctx,
+        )
+
+        if not result.success and (result.rate_limited or result.timed_out):
+            raise RateLimitError(result.error)
+
+        # Step 4: Compute visible output tokens (same heuristic as _exec_llm_call)
+        api_output      = result.output_tokens
+        reasoning_toks  = result.reasoning_tokens
+        has_text        = bool((result.response_text or "").strip())
+        char_len        = len(result.response_text or "")
+        visible_for_tpc = api_output - reasoning_toks if reasoning_toks > 0 else api_output
+        _use_local      = False
+        if has_text and char_len > 0 and visible_for_tpc > 0:
+            tpc = visible_for_tpc / char_len
+            threshold = 1.5 if _is_logographic(language_code) else 2.0
+            if tpc > threshold:
+                _use_local = True
+
+        if _use_local:
+            local_toks = _local_visible_token_count(result.response_text or "")
+            visible_output_tokens = local_toks if local_toks > 0 else max(0, api_output - reasoning_toks)
+            if reasoning_toks == 0 and local_toks > 0:
+                reasoning_toks = max(0, api_output - local_toks)
+        else:
+            visible_output_tokens = max(0, api_output - reasoning_toks)
+            if has_text and visible_output_tokens <= 0 and api_output > 0:
+                visible_output_tokens = api_output
+
+        # Step 5: Timing invariant check
+        timing_ok = check_timing_invariant(result)
+        if not timing_ok:
+            logger.warning(
+                "Calibration timing invariant violated: run=%d cal_prompt=%d lang=%d model=%d "
+                "ttft=%s comp=%s sc=%s tqt=%s",
+                run_id, calibration_prompt_id, language_id, model_id,
+                result.time_to_first_token_ms, result.time_to_completion_ms,
+                result.time_to_stream_close_ms, result.total_query_time_ms,
+            )
+
+        # Step 6: Compute baseline_quality
+        attempt_status   = "success" if (result.success and has_text) else "failed"
+        baseline_quality = compute_baseline_quality(
+            reasoning_tokens=reasoning_toks,
+            attempt_status=attempt_status,
+            reasoning_explicitly_disabled=reasoning_explicitly_disabled,
+        )
+
+        # Step 7: Store result
+        em.insert_calibration_result(
+            run_id=run_id,
+            calibration_prompt_id=calibration_prompt_id,
+            language_id=language_id,
+            model_id=model_id,
+            input_tokens=result.input_tokens if result.success else 0,
+            output_tokens=api_output if result.success else 0,
+            visible_output_tokens=visible_output_tokens if result.success else 0,
+            api_reported_output_tokens=api_output if result.success else 0,
+            reasoning_tokens=reasoning_toks,
+            time_to_first_token_ms=result.time_to_first_token_ms,
+            time_to_completion_ms=result.time_to_completion_ms,
+            total_query_time_ms=result.total_query_time_ms,
+            time_to_stream_close_ms=result.time_to_stream_close_ms,
+            stream_close_source=result.stream_close_source,
+            timing_anomaly=not timing_ok,
+            response_text=result.response_text if result.success else result.error,
+            baseline_quality=baseline_quality,
+            attempt_status=attempt_status,
+            had_retry_after=retry_count > 0,
+            retry_count=retry_count,
+            request_timestamp_utc=request_ts,
+            cell_sequential_index=repetition_index,
+            repetition_index=repetition_index,
+        )
+
+        if not result.success:
+            raise RuntimeError(f"Calibration LLM call failed: {result.error}")
 
     def _exec_magi_answer_discovery(self, payload: dict) -> None:
         """3-judge majority vote to determine if an unrecognised response is correct.
