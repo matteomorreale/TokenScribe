@@ -96,6 +96,13 @@ token_results                 -- INSERT + retry; immutable per (run, cell, repet
   --                 | "capable_but_inactive"  (is_reasoning=1 AND NOT reasoning_observed)
   --                 | "anomaly"               (is_reasoning=0 AND reasoning_observed) → WARNING logged
   --                 | "non_reasoning"         (is_reasoning=0 AND NOT reasoning_observed)
+  -- irrt_relative = time_to_first_token_ms / median(time_to_first_token_ms for this model in this run)
+  --                 NULL when TTFT unavailable for this row or all TTFT for the model are NULL.
+  --                 1.0 = typical latency; >1 = this trial was slower than model's own intra-run baseline.
+  -- irrt_absolute = time_to_first_token_ms / TTFT_expected
+  --                 TTFT_expected = intercept + α·input_tokens + β·visible_output_tokens
+  --                 OLS calibrated on is_reasoning=0 rows within this run (≥ 3 obs required).
+  --                 NULL when TTFT unavailable, or fewer than 3 non-reasoning rows exist in the run.
 
   -- get_results_by_run() filters to attempt_status='success' rows only,
   -- selecting the MAX(attempt_index) per (run, prompt, language, model, repetition_index).

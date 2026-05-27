@@ -260,13 +260,14 @@ class LLMService:
     def _do_openai_stream(client, call_kwargs: dict):
         """Run a streaming OpenAI-compatible completion.
 
-        Returns (content, usage, t_req, t_first_chunk, t_done).
-        t_first_chunk is None if the model produced no content tokens.
+        Returns (content, usage, t_req, t_first_chunk, t_last_chunk, t_done).
+        t_first_chunk and t_last_chunk are None if the model produced no content tokens.
         Raises on any error so the caller can fall back to non-streaming.
         """
         stream_kwargs = dict(call_kwargs, stream=True, stream_options={"include_usage": True})
         t_req = time.monotonic()
         t_first = None
+        t_last = None
         text_parts = []
         usage = None
 
@@ -277,19 +278,21 @@ class LLMService:
                 if chunk.choices and chunk.choices[0].delta.content:
                     if t_first is None:
                         t_first = time.monotonic()
+                    t_last = time.monotonic()
                     text_parts.append(chunk.choices[0].delta.content)
 
         t_done = time.monotonic()
-        return "".join(text_parts), usage, t_req, t_first, t_done
+        return "".join(text_parts), usage, t_req, t_first, t_last, t_done
 
     @staticmethod
-    def _timing_from_stream(t_req, t_first, t_done):
-        """Compute (ttft_ms, completion_ms) from raw timestamps."""
-        if t_first is None:
-            return None, None
+    def _timing_from_stream(t_req, t_first, t_last, t_done):
+        """Compute (ttft_ms, completion_ms, stream_close_ms) from raw timestamps."""
+        if t_first is None or t_last is None:
+            return None, None, None
         return (
             int((t_first - t_req) * 1000),
-            int((t_done - t_first) * 1000),
+            int((t_last - t_first) * 1000),
+            int((t_done - t_last) * 1000),
         )
 
     # ------------------------------------------------------------------
@@ -316,22 +319,24 @@ class LLMService:
 
             ttft_ms = None
             completion_ms = None
+            stream_close_ms = None
 
             try:
-                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+                content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, call_kwargs)
 
                 # If budget was exhausted and content is still empty, retry with higher cap.
                 if not content and usage and usage.completion_tokens >= max_tok and max_tok < 8192:
                     retry_kwargs = dict(call_kwargs, max_completion_tokens=8192)
                     try:
-                        content, usage, t_req, t_first, t_done = self._do_openai_stream(client, retry_kwargs)
+                        content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, retry_kwargs)
                     except Exception:
                         response = client.chat.completions.create(**retry_kwargs)
                         usage = response.usage
                         content = response.choices[0].message.content or "" if response.choices else ""
                         t_first = None
+                        t_last = None
 
-                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+                ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(t_req, t_first, t_last, t_done)
             except Exception:
                 # Streaming not supported or failed; fall back to non-streaming.
                 response = client.chat.completions.create(**call_kwargs)
@@ -355,6 +360,7 @@ class LLMService:
                 source="api_reported",
                 time_to_first_token_ms=ttft_ms,
                 time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)
@@ -498,23 +504,25 @@ class LLMService:
 
             ttft_ms = None
             completion_ms = None
+            stream_close_ms = None
             content = None
             usage = None
 
             try:
-                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
+                content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, call_kwargs)
 
                 if not content and usage and usage.completion_tokens >= max_tokens and max_tokens < 8192:
                     retry_kwargs = dict(call_kwargs, max_tokens=8192)
                     try:
-                        content, usage, t_req, t_first, t_done = self._do_openai_stream(client, retry_kwargs)
+                        content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, retry_kwargs)
                     except Exception:
                         response = client.chat.completions.create(**retry_kwargs)
                         usage = response.usage
                         content = response.choices[0].message.content or "" if response.choices else ""
                         t_first = None
+                        t_last = None
 
-                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+                ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(t_req, t_first, t_last, t_done)
             except Exception:
                 response = client.chat.completions.create(**call_kwargs)
                 usage = response.usage
@@ -540,6 +548,7 @@ class LLMService:
                 source="api_reported",
                 time_to_first_token_ms=ttft_ms,
                 time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)
@@ -567,10 +576,11 @@ class LLMService:
 
             ttft_ms = None
             completion_ms = None
+            stream_close_ms = None
 
             try:
-                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
-                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+                content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, call_kwargs)
+                ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(t_req, t_first, t_last, t_done)
             except Exception:
                 response = client.chat.completions.create(**call_kwargs)
                 usage = response.usage
@@ -583,6 +593,7 @@ class LLMService:
                 source="api_reported",
                 time_to_first_token_ms=ttft_ms,
                 time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)
@@ -616,10 +627,11 @@ class LLMService:
 
             ttft_ms = None
             completion_ms = None
+            stream_close_ms = None
 
             try:
-                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
-                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+                content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, call_kwargs)
+                ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(t_req, t_first, t_last, t_done)
             except Exception:
                 response = client.chat.completions.create(**call_kwargs)
                 usage = response.usage
@@ -632,6 +644,7 @@ class LLMService:
                 source="api_reported",
                 time_to_first_token_ms=ttft_ms,
                 time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)
@@ -687,10 +700,11 @@ class LLMService:
 
             ttft_ms = None
             completion_ms = None
+            stream_close_ms = None
 
             try:
-                content, usage, t_req, t_first, t_done = self._do_openai_stream(client, call_kwargs)
-                ttft_ms, completion_ms = self._timing_from_stream(t_req, t_first, t_done)
+                content, usage, t_req, t_first, t_last, t_done = self._do_openai_stream(client, call_kwargs)
+                ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(t_req, t_first, t_last, t_done)
             except Exception:
                 response = client.chat.completions.create(**call_kwargs)
                 usage = response.usage
@@ -707,6 +721,7 @@ class LLMService:
                 source="api_reported",
                 time_to_first_token_ms=ttft_ms,
                 time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)

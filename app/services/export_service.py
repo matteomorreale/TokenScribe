@@ -79,6 +79,8 @@ class ExportService:
             "time_to_first_token_ms",
             "time_to_completion_ms",
             "time_to_stream_close_ms",
+            "irrt_relative",
+            "irrt_absolute",
             "pei",
             "pei_band",
             "script_group_count",

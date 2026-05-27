@@ -80,7 +80,7 @@ def create_app(env: str = "default") -> Flask:
     def inject_globals():
         return {
             "app_name": "TokenScribe",
-            "app_version": "1.0.0",
+            "app_version": "1.5.0",
             "app_author": "Matteo Morreale",
         }
 

@@ -4,6 +4,7 @@ Author: Matteo Morreale
 """
 
 import logging
+import statistics
 from dataclasses import dataclass, field
 
 from .database import DatabaseManager
@@ -12,6 +13,72 @@ from config import TokenScribeConfig
 _log = logging.getLogger(__name__)
 
 _REASONING_THRESHOLD = TokenScribeConfig.REASONING_THRESHOLD
+_IRRT_ABS_MIN_OBS = 3  # minimum non-reasoning rows needed for OLS calibration
+
+
+def _compute_irrt(results: list) -> None:
+    """Mutates results in-place, adding irrt_relative and irrt_absolute to each row.
+
+    irrt_relative = TTFT / median(TTFT for this model in this run).
+                    1.0 = typical, >1 = slower than model's own baseline.
+                    NULL when TTFT is unavailable or all TTFT for the model are NULL.
+
+    irrt_absolute = TTFT / TTFT_expected, where TTFT_expected = α·input_tokens + β·visible_output_tokens
+                    (+ intercept) from OLS calibrated on is_reasoning=0 rows in this run.
+                    NULL when TTFT is unavailable or OLS cannot be fit (< _IRRT_ABS_MIN_OBS rows).
+    """
+    # --- iRRT-relativa: per-model median TTFT ---
+    model_ttft: dict = {}
+    for d in results:
+        ttft = d.get("time_to_first_token_ms")
+        if ttft is not None:
+            model_ttft.setdefault(d["model_id"], []).append(ttft)
+
+    model_median: dict = {
+        mid: statistics.median(vals)
+        for mid, vals in model_ttft.items()
+        if vals
+    }
+
+    for d in results:
+        ttft = d.get("time_to_first_token_ms")
+        median = model_median.get(d["model_id"])
+        if ttft is not None and median and median > 0:
+            d["irrt_relative"] = round(ttft / median, 4)
+        else:
+            d["irrt_relative"] = None
+
+    # --- iRRT-assoluta: OLS on non-reasoning rows ---
+    calib = [
+        d for d in results
+        if not d.get("is_reasoning_capable")
+        and d.get("time_to_first_token_ms") is not None
+        and d.get("input_tokens") is not None
+        and d.get("visible_output_tokens") is not None
+    ]
+
+    intercept = alpha = beta_out = None
+    if len(calib) >= _IRRT_ABS_MIN_OBS:
+        try:
+            import numpy as np
+            X = np.array(
+                [[1.0, float(d["input_tokens"]), float(d["visible_output_tokens"])] for d in calib]
+            )
+            y = np.array([float(d["time_to_first_token_ms"]) for d in calib])
+            coefs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+            intercept, alpha, beta_out = float(coefs[0]), float(coefs[1]), float(coefs[2])
+        except Exception:
+            pass
+
+    for d in results:
+        ttft = d.get("time_to_first_token_ms")
+        inp = d.get("input_tokens")
+        vot = d.get("visible_output_tokens")
+        if alpha is not None and ttft is not None and inp is not None and vot is not None:
+            ttft_expected = intercept + alpha * inp + beta_out * vot
+            d["irrt_absolute"] = round(ttft / ttft_expected, 4) if ttft_expected > 0 else None
+        else:
+            d["irrt_absolute"] = None
 
 
 class ExperimentModel:
@@ -535,6 +602,10 @@ class ExperimentModel:
                 else:
                     d["reasoning_state"] = "non_reasoning"
                 results.append(d)
+
+            # --- iRRT second pass (requires all rows per model to be collected first) ---
+            _compute_irrt(results)
+
             return results
         finally:
             conn.close()
