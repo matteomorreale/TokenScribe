@@ -213,14 +213,18 @@ Module-level functions, file `app/services/calibration_service.py`.
 
 - `CALIBRATION_PROMPTS` — list of 4 hardcoded baseline prompts (immutable across runs; slugs: `cal_01_short`, `cal_02_medium`, `cal_03_long`, `cal_04_long_varied`)
 - `BASELINE_RATE_SLUGS` — `{"cal_03_long", "cal_04_long_varied"}` — only long prompts used for `baseline_rates` (more stable token rate estimates)
-- `REASONING_TO_CALIBRATION_MODEL` — dict mapping Grok-reasoning model names to their non-reasoning siblings (e.g. `grok-4.20-0309-reasoning` → `grok-4.20-0309-non-reasoning`)
-- `resolve_calibration_model(model_name, is_reasoning, provider)` → `(effective_model_name, effective_is_reasoning, reasoning_explicitly_disabled)`
-  — Grok-reasoning models: swap to non-reasoning sibling; OpenAI `o1/o3/o4/gpt-5*`: set `is_reasoning=False` (LLMService minimum effort); others: best-effort `is_reasoning=False`, flagged disabled if `is_reasoning was True`
+- `REASONING_TO_CALIBRATION_MODEL` — dict mapping Grok-reasoning model names to their non-reasoning siblings (Level 1 companions)
+- `REASONING_DISABLE_STRATEGY` — dict `{provider: strategy}` — `"reasoning_effort"` | `"companion_model"` | `"none"` | `"not_applicable"`
+- `POOL_CANDIDATES` — ordered list of 4 pool candidate model dicts (Grok-non-reasoning, Magistral, Gemini-flash-lite, Claude-haiku)
+- `resolve_calibration_model(model_name, is_reasoning, provider)` → `(effective_model_name, effective_is_reasoning, reasoning_explicitly_disabled, baseline_source)`
+  — 3-level cascade: Level 1 (companion swap → `real_companion`); Level 2 (toggle → `real_toggle`); Level 3 (always-reasoning → `estimated_pool`); non-reasoning → `direct`
+- `compute_no_reasoning_compliance(model_name, is_reasoning, provider)` → `'not_required' | 'companion' | 'toggle' | 'pool' | 'pool_eligible'`
+- `select_pool_models(settings, db)` → `list[dict]` — selects exactly 3 pool models from 4 candidates based on API key availability; Claude-haiku max 1 substitution; ≥3 provider families required
 - `compute_baseline_quality(reasoning_tokens, attempt_status, reasoning_explicitly_disabled)` → `'clean' | 'degraded' | 'invalid'`
   — `'clean'`: `attempt_status='success'` and `reasoning_tokens ≤ CLEAN_REASONING_THRESHOLD (30)`; `'degraded'`: reasoning contamination; `'invalid'`: call failed
 - `get_or_create_calibration_translation(db, calibration_prompt_id, language_id, …, llm_service, settings)` → `str | None`
   — returns existing translation from `calibration_translations` or generates one via cheapest-provider cascade; English returns original text directly
-- `compute_baseline_rates(calibration_results)` → `dict` — per `(model_name, language_id)` token rate from `clean` long-prompt trials
+- `compute_baseline_rates(calibration_results, pool_model_names)` → `dict` — 3-level cascade: Level 1/2 use model's own clean trials; Level 3 uses cross-pool median; output keyed by `model_name → {baseline_source, languages: {lang_code → {rate, …, rate_per_model, cross_pool_median}}}`
 - `compute_prefix_caching_evidence(results)` → `dict` — computes `delta_ttft_first_vs_last` per model cell to detect prefix-cache warm-up
 
 ### CryptoService

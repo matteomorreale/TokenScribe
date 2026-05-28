@@ -655,6 +655,7 @@ class QueueService:
             resolve_calibration_model,
             compute_baseline_quality,
         )
+        # resolve_calibration_model now returns a 4-tuple: (eff_model, eff_is_reasoning, reasoning_explicitly_disabled, baseline_source)
 
         run_id                = int(payload["run_id"])
         calibration_prompt_id = int(payload["calibration_prompt_id"])
@@ -673,8 +674,8 @@ class QueueService:
         llm      = LLMService(settings, log_service=self._log)
         em       = ExperimentModel(self._db)
 
-        # Step 1: Resolve model + reasoning override for calibration
-        eff_model, eff_is_reasoning, reasoning_explicitly_disabled = resolve_calibration_model(
+        # Step 1: Resolve model + reasoning override for calibration (3-level cascade)
+        eff_model, eff_is_reasoning, reasoning_explicitly_disabled, baseline_source = resolve_calibration_model(
             model_name=model_name_orig,
             is_reasoning=is_reasoning_orig,
             provider=provider,
@@ -786,6 +787,7 @@ class QueueService:
             request_timestamp_utc=request_ts,
             cell_sequential_index=repetition_index,
             repetition_index=repetition_index,
+            baseline_source=baseline_source,
         )
 
         if not result.success:

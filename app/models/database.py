@@ -20,7 +20,9 @@ class DatabaseManager:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
 
     def get_connection(self) -> sqlite3.Connection:
         """Return a new SQLite connection with row_factory set."""
@@ -45,6 +47,7 @@ class DatabaseManager:
             self._seed_providers(conn)
             self._backfill_model_costs(conn)
             self._seed_calibration_prompts(conn)
+            self._backfill_no_reasoning_compliance(conn)
             conn.commit()
         finally:
             conn.close()
@@ -370,6 +373,27 @@ class DatabaseManager:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_run_history_run_id ON run_history(run_id)"
             )
+        except sqlite3.Error:
+            pass
+
+        # Run 20: baseline_source in calibration_results + no_reasoning_compliance in models
+        try:
+            cur = conn.execute("PRAGMA table_info(calibration_results)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "baseline_source" not in columns:
+                conn.execute(
+                    "ALTER TABLE calibration_results ADD COLUMN baseline_source TEXT"
+                )
+        except sqlite3.Error:
+            pass
+
+        try:
+            cur = conn.execute("PRAGMA table_info(models)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "no_reasoning_compliance" not in columns:
+                conn.execute(
+                    "ALTER TABLE models ADD COLUMN no_reasoning_compliance TEXT"
+                )
         except sqlite3.Error:
             pass
 
@@ -806,6 +830,28 @@ class DatabaseManager:
                          m.get("cost_per_input_token", 0.0) or 0.0,
                          m.get("cost_per_output_token", 0.0) or 0.0),
                     )
+
+    def _backfill_no_reasoning_compliance(self, conn: sqlite3.Connection):
+        """Populate no_reasoning_compliance for any model that still has NULL. Idempotent."""
+        try:
+            from app.services.calibration_service import compute_no_reasoning_compliance
+            rows = conn.execute(
+                """SELECT m.id, m.name, m.is_reasoning, p.name AS provider_name
+                   FROM models m JOIN providers p ON p.id = m.provider_id
+                   WHERE m.no_reasoning_compliance IS NULL"""
+            ).fetchall()
+            for row in rows:
+                compliance = compute_no_reasoning_compliance(
+                    model_name=row["name"],
+                    is_reasoning=bool(row["is_reasoning"]),
+                    provider=row["provider_name"],
+                )
+                conn.execute(
+                    "UPDATE models SET no_reasoning_compliance=? WHERE id=?",
+                    (compliance, row["id"]),
+                )
+        except Exception:
+            pass
 
     def _backfill_model_costs(self, conn: sqlite3.Connection):
         """Apply default pricing to existing models that still have cost = 0.

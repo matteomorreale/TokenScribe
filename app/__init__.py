@@ -43,8 +43,14 @@ def create_app(env: str = "default") -> Flask:
     log_service = LogService(app.config["DATABASE_PATH"])
     app.config["LOG_SERVICE"] = log_service
 
-    # Recover stale 'running' items from a previous crash, then start queue worker
-    QueueModel(db).recover_stale_running()
+    # Recover stale 'running' items from a previous crash, then start queue worker.
+    # Also recompute status for any run that is stuck in a non-terminal state
+    # (partial/running/queued) with no pending/running items — covers cases such as:
+    #   • app crash between mark_done and recompute_run_status
+    #   • status set by older code logic that didn't account for attempt_index
+    qm = QueueModel(db)
+    qm.recover_stale_running()
+    qm.recompute_stale_run_statuses()
     queue_service = QueueService(db, log_service=log_service, crypto_service=crypto_service)
     queue_service.start()
     app.config["QUEUE_SERVICE"] = queue_service

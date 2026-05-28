@@ -298,7 +298,11 @@ def new_experiment(study_id: int):
     #     4 fixed prompts × all languages × all selected models × expected_reps
     #     Stored in calibration_results (not token_results) — never pollutes PEI/MAGI.
     # ------------------------------------------------------------------
-    from app.services.calibration_service import CALIBRATION_PROMPTS
+    from app.services.calibration_service import (
+        CALIBRATION_PROMPTS,
+        compute_no_reasoning_compliance,
+        select_pool_models,
+    )
     cal_prompts_db = em.get_all_calibration_prompts()
     cal_prompt_by_slug = {p["slug"]: p for p in cal_prompts_db}
     cal_item_count = 0
@@ -368,6 +372,86 @@ def new_experiment(study_id: int):
             f"{len(selected_model_ids)} models × {repetitions_per_cell} reps).",
             "info",
         )
+
+    # ------------------------------------------------------------------
+    # 3c. Pool baseline calibration (priority 1) — only if ≥1 Level 3 model is selected
+    #     Pool models run calibration once per run; their rates are used as estimated
+    #     baseline for always-reasoning (Level 3) experimental models.
+    #     Pool items use item_key prefix "pool:" to stay distinct from regular "cal:" items.
+    # ------------------------------------------------------------------
+    has_level3 = any(
+        compute_no_reasoning_compliance(
+            em.get_model_by_id(mid)["name"],
+            bool(em.get_model_by_id(mid).get("is_reasoning", 0)),
+            em.get_model_by_id(mid)["provider_name"],
+        ) == "pool"
+        for mid in selected_model_ids
+        if em.get_model_by_id(mid)
+    )
+
+    pool_model_ids_queued: set[int] = set()
+    if has_level3:
+        pool_models = select_pool_models(settings, current_app.config["DB"])
+        if not pool_models:
+            flash(
+                "Warning: Level 3 (always-reasoning) model detected but pool baseline could not be "
+                "configured (insufficient API keys or pool models not registered). "
+                "Baseline for these models will be marked estimated_pool with no pool data.",
+                "warning",
+            )
+        else:
+            pool_cal_count = 0
+            for cal_p in CALIBRATION_PROMPTS:
+                db_row = cal_prompt_by_slug.get(cal_p["slug"])
+                if not db_row:
+                    continue
+                cal_prompt_id = db_row["id"]
+
+                for lang_info in cal_languages.values():
+                    for pool_model in pool_models:
+                        pmid = pool_model["model_id"]
+                        # Skip if this pool model is already in the experimental set
+                        # (its regular cal: items already cover it)
+                        if pmid in selected_model_ids:
+                            pool_model_ids_queued.add(pmid)
+                            continue
+                        pool_model_ids_queued.add(pmid)
+                        for rep in range(repetitions_per_cell):
+                            qm.enqueue(
+                                run_id=run_id,
+                                operation_type="calibration_llm_call",
+                                item_key=(
+                                    f"pool:cp{cal_prompt_id}"
+                                    f":l{lang_info['language_id']}"
+                                    f":m{pmid}:r{rep}"
+                                ),
+                                payload={
+                                    "run_id":                 run_id,
+                                    "calibration_prompt_id":  cal_prompt_id,
+                                    "cal_prompt_slug":        cal_p["slug"],
+                                    "text_en":                cal_p["text_en"],
+                                    "language_id":            lang_info["language_id"],
+                                    "language_name":          lang_info["language_name"],
+                                    "language_code":          lang_info["language_code"],
+                                    "model_id":               pmid,
+                                    "provider":               pool_model["provider"],
+                                    "model_name":             pool_model["model_name"],
+                                    "cost_per_input":         0.0,
+                                    "cost_per_output":        0.0,
+                                    "is_reasoning":           False,
+                                    "repetition_index":       rep,
+                                },
+                                priority=1,
+                            )
+                            pool_cal_count += 1
+
+            if pool_cal_count > 0:
+                flash(
+                    f"{pool_cal_count} pool baseline calibration trials queued "
+                    f"({len(pool_models)} pool models × {len(cal_languages)} languages × "
+                    f"{len(CALIBRATION_PROMPTS)} prompts × {repetitions_per_cell} reps).",
+                    "info",
+                )
 
     # ------------------------------------------------------------------
     # 4. LLM calls (priority 2) — repetitions_per_cell items per prompt × model × language

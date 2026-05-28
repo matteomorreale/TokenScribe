@@ -407,6 +407,7 @@ class ExperimentModel:
         request_timestamp_utc: str = None,
         cell_sequential_index: int = None,
         repetition_index: int = 0,
+        baseline_source: str = None,
     ) -> int:
         """Insert a calibration result row. attempt_index computed atomically."""
         conn = self.db.get_connection()
@@ -429,7 +430,8 @@ class ExperimentModel:
                     stream_close_source, timing_anomaly, response_text,
                     baseline_quality,
                     had_retry_after, retry_after_sleep_ms, retry_count,
-                    request_timestamp_utc, cell_sequential_index)
+                    request_timestamp_utc, cell_sequential_index,
+                    baseline_source)
                    SELECT ?, ?, ?, ?,
                           ?,
                           COALESCE((SELECT MAX(c2.attempt_index) + 1
@@ -445,7 +447,8 @@ class ExperimentModel:
                           ?, ?, ?,
                           ?,
                           ?, ?, ?,
-                          ?, ?""",
+                          ?, ?,
+                          ?""",
                 (run_id, calibration_prompt_id, language_id, model_id,
                  repetition_index,
                  run_id, calibration_prompt_id, language_id, model_id, repetition_index,
@@ -457,7 +460,8 @@ class ExperimentModel:
                  stream_close_source, 1 if timing_anomaly else 0, response_text,
                  baseline_quality,
                  1 if had_retry_after else 0, retry_after_sleep_ms, retry_count,
-                 request_timestamp_utc, cell_sequential_index),
+                 request_timestamp_utc, cell_sequential_index,
+                 baseline_source),
             )
             conn.commit()
             return cur.lastrowid
@@ -489,7 +493,7 @@ class ExperimentModel:
                    JOIN writing_systems ws     ON ws.id = l.writing_system_id
                    JOIN models m               ON m.id  = cr.model_id
                    JOIN providers p            ON p.id  = m.provider_id
-                   WHERE cr.run_id = ?
+                   WHERE cr.run_id = ? AND cr.attempt_status = 'success'
                    ORDER BY cp.id, l.name, m.name, cr.repetition_index""",
                 (run_id,),
             ).fetchall()

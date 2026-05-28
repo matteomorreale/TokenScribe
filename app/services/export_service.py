@@ -8,6 +8,7 @@ Handles dataset export to CSV and JSON formats.
 import csv
 import json
 import io
+import statistics
 from typing import List
 
 
@@ -169,15 +170,27 @@ class ExportService:
             enriched["cell_actual_reps"] = actual
             enriched_results.append(enriched)
 
-        # --- Run 19: calibration analytics ---
+        # --- Run 19/20: calibration analytics ---
         cal_results = calibration_results or []
 
-        # baseline_rates: per (model, language) token rate from clean calibration trials
         from app.services.calibration_service import (
             compute_baseline_rates,
             compute_prefix_caching_evidence,
+            POOL_CANDIDATES,
         )
-        baseline_rates = compute_baseline_rates(cal_results)
+
+        # Infer pool model names from calibration results (models that ran as pool members)
+        pool_candidate_names = {c["model_name"] for c in POOL_CANDIDATES}
+        pool_model_names_in_run = [
+            r.get("model_name", "")
+            for r in cal_results
+            if r.get("model_name") in pool_candidate_names
+               and r.get("baseline_source") in ("direct", "real_toggle", "real_companion")
+        ]
+        pool_model_names_in_run = list(dict.fromkeys(pool_model_names_in_run))  # deduplicate, preserve order
+
+        # baseline_rates: 3-level cascade (Run 20 structure)
+        baseline_rates = compute_baseline_rates(cal_results, pool_model_names=pool_model_names_in_run)
 
         # prefix_caching_evidence: from experimental results (repetition order vs TTFT)
         prefix_caching_evidence = compute_prefix_caching_evidence(enriched_results)
@@ -188,6 +201,44 @@ class ExportService:
             if r.get("timing_anomaly"):
                 mn = r.get("model_name", "unknown")
                 timing_anomalies[mn] = timing_anomalies.get(mn, 0) + 1
+
+        # streaming_efficiency_summary: compare baseline rate vs observed rate per model
+        # Observed rate = visible_output_tokens / (time_to_completion_ms / 1000) from token_results.
+        # reasoning_during_streaming ≈ False when observed_rate >= baseline_rate.
+        obs_rates: dict[str, list[float]] = {}
+        for r in enriched_results:
+            vot  = r.get("visible_output_tokens") or 0
+            comp = r.get("time_to_completion_ms") or 0
+            mn   = r.get("model_name", "")
+            if vot > 0 and comp > 0 and mn:
+                obs_rates.setdefault(mn, []).append(vot / (comp / 1000.0))
+
+        streaming_efficiency_summary: dict = {}
+        for model_name, rates in obs_rates.items():
+            obs_median = round(statistics.median(rates), 2) if rates else None
+            # Pull baseline median across all languages (overall median of per-language medians)
+            bl_entry = baseline_rates.get(model_name, {})
+            bl_lang_medians = [
+                v.get("rate_tok_per_sec_median")
+                for v in bl_entry.get("languages", {}).values()
+                if v.get("rate_tok_per_sec_median") is not None
+            ]
+            bl_median = round(statistics.median(bl_lang_medians), 2) if bl_lang_medians else None
+
+            efficiency = None
+            if obs_median and bl_median and bl_median > 0:
+                efficiency = round(obs_median / bl_median, 4)
+
+            streaming_efficiency_summary[model_name] = {
+                "baseline_rate_tok_per_sec": bl_median,
+                "observed_rate_tok_per_sec":  obs_median,
+                "streaming_efficiency":       efficiency,
+                "baseline_source":            bl_entry.get("baseline_source"),
+                "reasoning_during_streaming": (
+                    False if (obs_median and bl_median and obs_median >= bl_median * 0.9)
+                    else (True if (obs_median and bl_median and obs_median < bl_median * 0.9) else None)
+                ),
+            }
 
         dataset = {
             "_notes": {
@@ -214,9 +265,27 @@ class ExportService:
                     "Stored separately from token_results — never included in PEI/MAGI aggregates."
                 ),
                 "baseline_rates": (
-                    "Per-(model, language) token/sec rate derived from cal_03_long and cal_04_long_varied, "
-                    "baseline_quality='clean' trials only. "
-                    "baseline_quality='degraded' entries are listed but should be excluded from iRRT calibration."
+                    "Per-model baseline streaming rate (tok/sec) derived from cal_03_long and cal_04_long_varied "
+                    "(baseline_quality='clean' trials only), structured by 3-level cascade: "
+                    "real_companion = non-reasoning sibling used (Level 1, self-referential); "
+                    "real_toggle = reasoning disabled via internal parameter (Level 2, self-referential); "
+                    "estimated_pool = always-reasoning model; rate = cross-pool median of 3 reference models "
+                    "(Level 3, cross-model estimate — ambiguity between reasoning overhead and model weight remains). "
+                    "Per-language sub-dict; Level 3 entries include rate_per_model and cross_pool_median."
+                ),
+                "baseline_rates_level3_limit": (
+                    "Methodological note (Level 3 / estimated_pool): for a model that is always-reasoning, "
+                    "a streaming rate lower than the pool baseline cannot be unambiguously attributed to "
+                    "reasoning-during-streaming vs the model simply being slower than the pool. "
+                    "The comparison is cross-model (not self-referential), so the ambiguity is irreducible. "
+                    "For Level 1 and 2 models this ambiguity does not exist."
+                ),
+                "irrt_primacy": (
+                    "Run 19 finding: rate_observed >= rate_baseline on all measurable models; "
+                    "reasoning_during_streaming ≈ 0. iRRT (Inferred Reasoning Response Time) based on TTFT "
+                    "remains the primary estimate of pre-output reasoning time. "
+                    "The streaming baseline is a diagnostic tool to falsify the hypothesis of "
+                    "reasoning-during-streaming, not a constructive component of the iRRT metric."
                 ),
                 "prefix_caching_evidence": (
                     "Heuristic: median(TTFT rep=0) - median(TTFT rep=max) per cell. "
@@ -233,6 +302,13 @@ class ExportService:
                     "'inferred' = set equal to total_query_time_ms (non-streaming provider or fallback). "
                     "Exclude 'inferred' rows from analyses that rely on pure stream_close values."
                 ),
+                "streaming_efficiency_summary": (
+                    "Per-model comparison: baseline_rate_tok_per_sec (from calibration, non-reasoning path) "
+                    "vs observed_rate_tok_per_sec (from token_results during the experiment). "
+                    "streaming_efficiency = observed/baseline (1.0 = same speed; <1.0 = slower during experiment). "
+                    "reasoning_during_streaming: False when observed >= 90% of baseline (consistent with Run 19). "
+                    "Inherits baseline_source from baseline_rates."
+                ),
             },
             "run_notes": run_notes or "",
             "cell_completeness": completeness_block,
@@ -240,9 +316,10 @@ class ExportService:
             "pei_results": pei_results or [],
             "pei_group_results": pei_group_results or [],
             "translation_scores": translation_scores or [],
-            # Run 19 additions
+            # Run 19/20 additions
             "calibration_results": cal_results,
             "baseline_rates": baseline_rates,
+            "streaming_efficiency_summary": streaming_efficiency_summary,
             "prefix_caching_evidence": prefix_caching_evidence,
             "timing_anomalies_count": timing_anomalies,
         }

@@ -50,7 +50,8 @@ models
   cost_per_input_token  REAL,   -- USD per million input tokens ($/M)
   cost_per_output_token REAL,   -- USD per million output tokens ($/M)
   is_active,
-  is_reasoning INTEGER NOT NULL DEFAULT 0  -- 1 = model exposes hidden reasoning tokens
+  is_reasoning INTEGER NOT NULL DEFAULT 0,  -- 1 = model exposes hidden reasoning tokens
+  no_reasoning_compliance TEXT              -- 'not_required'|'companion'|'toggle'|'pool'|'pool_eligible' (auto-computed)
 
 experiment_runs
   id, study_id → studies.id, timestamp, notes
@@ -230,6 +231,7 @@ calibration_results           -- token-level records for calibration trials (mir
   stream_close_source TEXT NOT NULL DEFAULT 'native',
   reasoning_tokens INT,
   baseline_quality TEXT NOT NULL DEFAULT 'clean',  -- 'clean' | 'degraded' | 'invalid'
+  baseline_source TEXT,                            -- 'real_companion'|'real_toggle'|'estimated_pool'|'direct' (cascade level)
   had_retry_after INT NOT NULL DEFAULT 0,
   retry_after_sleep_ms INT NOT NULL DEFAULT 0,
   retry_count INT NOT NULL DEFAULT 0,

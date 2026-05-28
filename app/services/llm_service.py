@@ -530,20 +530,70 @@ class LLMService:
             from google import genai
             from google.genai import types as genai_types
             client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt_text,
-                config=genai_types.GenerateContentConfig(max_output_tokens=MAX_OUTPUT_TOKENS),
-            )
-            usage = response.usage_metadata
+            config = genai_types.GenerateContentConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
+
+            ttft_ms = None
+            completion_ms = None
+            stream_close_ms = None
+            content = ""
+            usage = None
+
+            # Try streaming first for TTFT measurement (Gemini/Run-20 requirement)
+            streaming_ok = False
+            try:
+                t_req = time.monotonic()
+                t_first = None
+                t_last = None
+                text_parts: list[str] = []
+
+                for chunk in client.models.generate_content_stream(
+                    model=model_name,
+                    contents=prompt_text,
+                    config=config,
+                ):
+                    try:
+                        chunk_text = chunk.text
+                    except Exception:
+                        chunk_text = None
+                    if chunk_text:
+                        if t_first is None:
+                            t_first = time.monotonic()
+                        t_last = time.monotonic()
+                        text_parts.append(chunk_text)
+                    chunk_usage = getattr(chunk, "usage_metadata", None)
+                    if chunk_usage:
+                        usage = chunk_usage
+
+                t_done = time.monotonic()
+                if usage is not None:
+                    ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(
+                        t_req, t_first, t_last, t_done
+                    )
+                    content = "".join(text_parts)
+                    streaming_ok = True
+            except Exception:
+                pass
+
+            if not streaming_ok:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt_text,
+                    config=config,
+                )
+                usage = response.usage_metadata
+                content = response.text or ""
+
             thoughts_toks = getattr(usage, "thoughts_token_count", 0) or 0
             visible_toks = getattr(usage, "candidates_token_count", 0) or 0
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_token_count,
                 output_tokens=visible_toks + thoughts_toks,
                 reasoning_tokens=thoughts_toks,
-                response_text=response.text or "",
+                response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)
@@ -729,17 +779,67 @@ class LLMService:
         try:
             from mistralai.client.sdk import Mistral
             client = Mistral(api_key=api_key)
-            response = client.chat.complete(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt_text}],
-                max_tokens=MAX_OUTPUT_TOKENS,
-            )
-            usage = response.usage
+
+            ttft_ms = None
+            completion_ms = None
+            stream_close_ms = None
+            content = ""
+            usage = None
+
+            # Try streaming first for TTFT measurement (Magistral/Run-20 requirement)
+            streaming_ok = False
+            try:
+                t_req = time.monotonic()
+                t_first = None
+                t_last = None
+                text_parts: list[str] = []
+
+                with client.chat.stream(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt_text}],
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                ) as stream:
+                    for event in stream:
+                        data = getattr(event, "data", event)
+                        for choice in (getattr(data, "choices", None) or []):
+                            delta = getattr(choice, "delta", None)
+                            chunk_text = getattr(delta, "content", None) if delta else None
+                            if chunk_text:
+                                if t_first is None:
+                                    t_first = time.monotonic()
+                                t_last = time.monotonic()
+                                text_parts.append(chunk_text)
+                        ev_usage = getattr(data, "usage", None)
+                        if ev_usage:
+                            usage = ev_usage
+
+                t_done = time.monotonic()
+                if usage is not None:
+                    ttft_ms, completion_ms, stream_close_ms = self._timing_from_stream(
+                        t_req, t_first, t_last, t_done
+                    )
+                    content = "".join(text_parts)
+                    streaming_ok = True
+            except Exception:
+                pass
+
+            if not streaming_ok:
+                response = client.chat.complete(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt_text}],
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                )
+                usage = response.usage
+                content = response.choices[0].message.content or ""
+
             return TokenScribeCallResult(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
-                response_text=response.choices[0].message.content or "",
+                response_text=content,
                 source="api_reported",
+                time_to_first_token_ms=ttft_ms,
+                time_to_completion_ms=completion_ms,
+                time_to_stream_close_ms=stream_close_ms,
             )
         except Exception as e:
             err = str(e)

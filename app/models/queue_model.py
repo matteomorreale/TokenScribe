@@ -531,6 +531,46 @@ class QueueModel:
         finally:
             conn.close()
 
+    def recompute_stale_run_statuses(self) -> int:
+        """
+        At startup, recompute status for any run whose queue is fully settled
+        (no pending/running items) but whose status is still a non-terminal
+        value (partial, running, queued).
+
+        This handles two cases:
+        1. App crashed/restarted after the last queue item was marked done but
+           before recompute_run_status was persisted.
+        2. Historical runs whose 'partial' status was set by older logic that
+           counted ALL response_valid=0 rows instead of only the latest attempt.
+
+        Returns the number of runs whose status was updated.
+        """
+        conn = self.db.get_connection()
+        try:
+            # Find all non-terminal runs that have no pending or running queue items.
+            # Runs with only done/error/timeout/cancelled items are fully settled and
+            # can be safely recomputed (recompute_run_status is idempotent).
+            rows = conn.execute(
+                """SELECT id FROM experiment_runs
+                   WHERE status IN ('partial', 'running', 'queued')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM run_queue rq
+                         WHERE rq.run_id = experiment_runs.id
+                           AND rq.status IN (?, ?)
+                     )""",
+                (ITEM_PENDING, ITEM_RUNNING),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        updated = 0
+        for row in rows:
+            old_status = "partial"  # we know it was non-terminal
+            new_status = self.recompute_run_status(row["id"])
+            if new_status != old_status:
+                updated += 1
+        return updated
+
     # ------------------------------------------------------------------
     # Run status
     # ------------------------------------------------------------------

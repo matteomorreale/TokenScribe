@@ -94,9 +94,9 @@
         {% endif %}>
         {% if cal_total > 0 and is_active and (cal_done + cal_err) < cal_total %}
           <span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span>
-          in corso
+          in progress
         {% elif cal_total > 0 %}
-          completata
+          completed
         {% endif %}
       </span>
       <span id="ts-cal-text" style="font-size:.72rem; color:var(--ts-text-muted); margin-left:auto;">
@@ -112,27 +112,43 @@
     </div>
     <details>
       <summary style="font-size:.72rem; color:var(--ts-text-muted); cursor:pointer; list-style:none; display:inline-flex; align-items:center; gap:.3rem; user-select:none; outline:none;">
-        <span>ℹ Cos'è la calibration battery?</span>
+        <span>ℹ What is the calibration battery?</span>
       </summary>
       <div style="font-size:.75rem; color:var(--ts-text-muted); margin-top:.4rem; line-height:1.55; padding:.5rem .75rem; background:var(--ts-bg-alt,#1e1e2e); border-radius:5px; border-left:2px solid var(--ts-accent,#6366f1);">
         <p style="margin:0 0 .4rem 0;">
-          <strong style="color:var(--ts-text);">La calibration battery</strong> esegue <strong>4 prompt standardizzati</strong>
-          (cal_01_short → cal_04_long_varied) su ogni combinazione modello × lingua,
-          <em>prima</em> dei prompt sperimentali. Misura la velocità di generazione token baseline
-          (tok/sec) per stimare il tasso di riferimento necessario al calcolo dell'<strong>iRRT</strong>.
+          <strong style="color:var(--ts-text);">The calibration battery</strong> runs <strong>4 standardised prompts</strong>
+          (cal_01_short → cal_04_long_varied) for every model × language combination,
+          <em>before</em> the experimental prompts. It measures the baseline token generation speed
+          (tok/sec) to estimate the reference rate required for <strong>iRRT</strong> calculation.
         </p>
         <p style="margin:0 0 .4rem 0;">
+          The baseline is derived in two ways depending on the model's reasoning capability:
+        </p>
+        <ul style="margin:.2rem 0 .4rem 1.2rem; padding:0;">
+          <li style="margin-bottom:.2rem;">
+            <strong style="color:var(--ts-text);">Non-reasoning &amp; reasoning models</strong> (with companion swap or API toggle) —
+            calibration runs on the model itself with reasoning disabled, providing a
+            <em>self-referential</em> baseline (<code>real_companion</code> / <code>real_toggle</code>).
+          </li>
+          <li>
+            <strong style="color:var(--ts-text);">Always-reasoning models</strong> (no off switch) —
+            reasoning cannot be disabled, so the baseline is <em>estimated</em> from the cross-pool
+            median of 3 MAGI reference models (non-reasoning pool), labelled
+            <code>estimated_pool</code> in the export.
+          </li>
+        </ul>
+        <p style="margin:0 0 .4rem 0;">
           <strong style="color:var(--ts-text);">iRRT</strong> (Implicit Reasoning Rate Tracer) —
-          confronta la velocità di token streaming osservata durante i prompt sperimentali
-          con il tasso baseline stimato dalla calibration.
-          Una velocità significativamente inferiore alla baseline segnala attività di reasoning interno
-          (thinking nascosto), anche nei modelli che non lo dichiarano esplicitamente nell'API.
+          compares the token streaming speed observed during experimental prompts
+          against the applicable baseline rate.
+          A speed significantly below baseline signals internal reasoning activity
+          (hidden thinking), even in models that do not expose it explicitly via the API.
         </p>
         <p style="margin:0; font-size:.7rem;">
-          I risultati di calibration sono esclusi da PEI, MAGI e LER — sono metriche infrastrutturali,
-          non dati sperimentali. Solo <code>cal_03_long</code> e <code>cal_04_long_varied</code>
-          con <code>baseline_quality='clean'</code> contribuiscono ai <code>baseline_rates</code>
-          nell'export JSON.
+          Calibration results are excluded from PEI, MAGI and LER — they are infrastructure metrics,
+          not experimental data. Only <code>cal_03_long</code> and <code>cal_04_long_varied</code>
+          with <code>baseline_quality='clean'</code> contribute to <code>baseline_rates</code>
+          in the JSON export.
         </p>
       </div>
     </details>
@@ -172,7 +188,7 @@
       <table id="ts-call-grid" style="border-collapse:collapse;">
         <thead>
           <tr>
-            <th style="padding:.1rem .5rem .1rem 0; text-align:left; position:sticky; left:0; top:0; z-index:3; background:var(--ts-card-bg,var(--ts-bg,#0f0f1a)); min-width:100px; font-size:.65rem; color:var(--ts-text-muted); font-weight:normal; border-bottom:1px solid var(--ts-border);">↓ Modello \ Lingua →</th>
+            <th style="padding:.1rem .5rem .1rem 0; text-align:left; position:sticky; left:0; top:0; z-index:3; background:var(--ts-card-bg,var(--ts-bg,#0f0f1a)); min-width:100px; font-size:.65rem; color:var(--ts-text-muted); font-weight:normal; border-bottom:1px solid var(--ts-border);">↓ Model \ Language →</th>
             {% for lang in gl.data %}
             <th style="padding:.1rem .2rem; text-align:center; font-size:.65rem; color:var(--ts-text-muted); white-space:nowrap; position:sticky; top:0; z-index:2; background:var(--ts-card-bg,var(--ts-bg,#0f0f1a)); border-bottom:1px solid var(--ts-border);" title="{{ lang.name }}">{{ lang.code }}</th>
             {% endfor %}
@@ -214,7 +230,7 @@
   <div class="ts-table-wrap" style="max-height:220px; overflow-y:auto;">
     <table class="ts-table" style="font-size:.78rem;">
       <thead>
-        <tr><th>Operazione</th><th>Chiave</th><th>Modello</th><th>Lingua</th><th>Stato</th><th>Errore</th></tr>
+        <tr><th>Operation</th><th>Key</th><th>Model</th><th>Language</th><th>Status</th><th>Error</th></tr>
       </thead>
       <tbody id="ts-queue-tbody">
         {% for it in queue_items %}
@@ -888,10 +904,10 @@
                                 (calRunning > 0 || (calDone + calErr) < calTotal);
             if (isCalActive) {
               calPhase.style.cssText = 'display:inline-flex; align-items:center; gap:.35rem; font-size:.72rem; color:var(--ts-accent,#6366f1);';
-              calPhase.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span> in corso`;
+              calPhase.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span> in progress`;
             } else {
               calPhase.style.cssText = 'font-size:.72rem; color:var(--ts-text-muted);';
-              calPhase.textContent = 'completata';
+              calPhase.textContent = 'completed';
             }
           }
         }
