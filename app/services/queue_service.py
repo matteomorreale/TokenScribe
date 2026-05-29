@@ -792,6 +792,8 @@ class QueueService:
 
         if not result.success:
             raise RuntimeError(f"Calibration LLM call failed: {result.error}")
+        if not has_text:
+            raise RuntimeError(f"Calibration LLM call returned empty response (model={eff_model})")
 
     def _exec_magi_answer_discovery(self, payload: dict) -> None:
         """3-judge majority vote to determine if an unrecognised response is correct.

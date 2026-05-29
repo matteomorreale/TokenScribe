@@ -95,6 +95,8 @@
         {% if cal_total > 0 and is_active and (cal_done + cal_err) < cal_total %}
           <span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span>
           in progress
+        {% elif cal_total > 0 and cal_err > 0 %}
+          <span style="color:var(--ts-warning,#f59e0b);">completed with {{ cal_err }} error{{ 's' if cal_err != 1 }}</span>
         {% elif cal_total > 0 %}
           completed
         {% endif %}
@@ -284,8 +286,8 @@
   </div>
   {% endif %}
 
-  {# Resume / retry actions — visible for partial/failed AND for stopped with errors #}
-  {% if has_errors or (is_stopped and progress and progress.error > 0) %}
+  {# Resume / retry actions — visible for partial/failed, stopped with errors, AND completed with errors #}
+  {% if has_errors or (not is_active and progress and progress.error > 0) %}
   <div style="padding:.75rem 1.25rem; display:flex; gap:.75rem; flex-wrap:wrap; border-top:1px solid var(--ts-border);">
     <form method="post" action="{{ url_for('run.retry_errors', run_id=run.id) }}">
       <button class="ts-btn ts-btn-primary ts-btn-sm">
@@ -905,6 +907,9 @@
             if (isCalActive) {
               calPhase.style.cssText = 'display:inline-flex; align-items:center; gap:.35rem; font-size:.72rem; color:var(--ts-accent,#6366f1);';
               calPhase.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--ts-accent,#6366f1);animation:ts-gcpulse 1.1s ease-in-out infinite;display:inline-block;"></span> in progress`;
+            } else if (calErr > 0) {
+              calPhase.style.cssText = 'font-size:.72rem; color:var(--ts-warning,#f59e0b);';
+              calPhase.textContent = `completed with ${calErr} error${calErr !== 1 ? 's' : ''}`;
             } else {
               calPhase.style.cssText = 'font-size:.72rem; color:var(--ts-text-muted);';
               calPhase.textContent = 'completed';
