@@ -129,7 +129,7 @@ CLEAN_REASONING_THRESHOLD = 30
 
 # Ordered priority list of 4 pool candidates.
 # At run creation, 3 are selected (in order) based on which API keys are available.
-# Claude-haiku may substitute for at most 1 slot (max_as_substitute=True).
+# Mistral-large may substitute for at most 1 slot (max_as_substitute=True).
 POOL_CANDIDATES: list[dict] = [
     {
         "model_name": "grok-4.20-0309-non-reasoning",
@@ -138,9 +138,9 @@ POOL_CANDIDATES: list[dict] = [
         "max_as_substitute": False,
     },
     {
-        "model_name": "magistral-medium-latest",
-        "provider":   "mistral",
-        "api_key":    "mistral_api_key",
+        "model_name": "claude-haiku-4-5",
+        "provider":   "anthropic",
+        "api_key":    "anthropic_api_key",
         "max_as_substitute": False,
     },
     {
@@ -150,9 +150,9 @@ POOL_CANDIDATES: list[dict] = [
         "max_as_substitute": False,
     },
     {
-        "model_name": "claude-haiku-4-5",
-        "provider":   "anthropic",
-        "api_key":    "anthropic_api_key",
+        "model_name": "mistral-large-latest",
+        "provider":   "mistral",
+        "api_key":    "mistral_api_key",
         "max_as_substitute": True,   # allowed for at most 1 substitution
     },
 ]
@@ -167,7 +167,7 @@ def select_pool_models(settings: dict, db) -> list[dict]:
     Selection rules:
     - Try candidates in priority order (POOL_CANDIDATES list).
     - Skip candidates whose API key is missing from settings.
-    - Claude-haiku (max_as_substitute=True) may fill at most 1 slot.
+    - Mistral-large (max_as_substitute=True) may fill at most 1 slot.
     - At least 3 distinct provider families must be represented.
     - Returns a list of model dicts {model_name, provider, model_id} (empty if requirements unmet).
     """

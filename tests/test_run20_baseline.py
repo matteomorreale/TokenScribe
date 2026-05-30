@@ -143,17 +143,20 @@ class TestComputeNoReasoningCompliance(unittest.TestCase):
         self.assertEqual(self.classify("gpt-4o", False, "openai"), "not_required")
 
     def test_non_reasoning_non_pool_mistral(self):
-        self.assertEqual(self.classify("mistral-large-latest", False, "mistral"), "not_required")
+        # mistral-large-latest is now the pool substitute → pool_eligible
+        self.assertEqual(self.classify("mistral-large-latest", False, "mistral"), "pool_eligible")
 
     def test_pool_eligible_grok_non_reasoning(self):
         v = self.classify("grok-4.20-0309-non-reasoning", False, "xai")
         self.assertEqual(v, "pool_eligible")
 
-    def test_pool_eligible_magistral(self):
-        # magistral-medium-latest is a pool candidate (reasoning model running with toggle)
-        # but its non-reasoning equivalent would be... Actually magistral IS reasoning.
-        # The pool candidate is magistral-medium-latest (with toggle); so for compliance
-        # it should be "toggle" (reasoning=True), not pool_eligible.
+    def test_pool_eligible_mistral_large(self):
+        # mistral-large-latest is the new pool substitute (non-reasoning) → pool_eligible
+        v = self.classify("mistral-large-latest", False, "mistral")
+        self.assertEqual(v, "pool_eligible")
+
+    def test_magistral_not_pool_eligible(self):
+        # magistral is a reasoning model with toggle support; no longer a pool candidate
         v = self.classify("magistral-medium-latest", True, "mistral")
         self.assertEqual(v, "toggle")
 
@@ -299,14 +302,14 @@ class TestComputeBaselineRates(unittest.TestCase):
     # Level 3: uses cross-pool median
     def test_level3_model_gets_cross_pool_median(self):
         slug = self._long_slug()
-        pool_models = ["grok-4.20-0309-non-reasoning", "magistral-medium-latest", "gemini-2.5-flash-lite"]
+        pool_models = ["grok-4.20-0309-non-reasoning", "claude-haiku-4-5", "gemini-2.5-flash-lite"]
         results = [
             # Pool model 1: 300 tok / 5s = 60 tok/s
-            _make_cal_result("grok-4.20-0309-non-reasoning",  "en", slug, 300, 5000, baseline_source="direct"),
+            _make_cal_result("grok-4.20-0309-non-reasoning", "en", slug, 300, 5000, baseline_source="direct"),
             # Pool model 2: 240 tok / 4s = 60 tok/s
-            _make_cal_result("magistral-medium-latest",        "en", slug, 240, 4000, baseline_source="real_toggle"),
+            _make_cal_result("claude-haiku-4-5",              "en", slug, 240, 4000, baseline_source="direct"),
             # Pool model 3: 360 tok / 6s = 60 tok/s
-            _make_cal_result("gemini-2.5-flash-lite",          "en", slug, 360, 6000, baseline_source="direct"),
+            _make_cal_result("gemini-2.5-flash-lite",         "en", slug, 360, 6000, baseline_source="direct"),
             # Level 3 experimental model (always-reasoning)
             _make_cal_result("deepseek-v4-pro", "en", slug, 200, 3000,
                              baseline_quality="degraded", baseline_source="estimated_pool"),
@@ -456,28 +459,28 @@ class TestSelectPoolModels(unittest.TestCase):
         """Mock DB where all 4 pool candidates exist."""
         return _make_mock_db([
             {"name": "grok-4.20-0309-non-reasoning", "provider": "xai",       "id": 1},
-            {"name": "magistral-medium-latest",       "provider": "mistral",   "id": 2},
+            {"name": "claude-haiku-4-5",              "provider": "anthropic", "id": 2},
             {"name": "gemini-2.5-flash-lite",         "provider": "google",    "id": 3},
-            {"name": "claude-haiku-4-5",              "provider": "anthropic", "id": 4},
+            {"name": "mistral-large-latest",          "provider": "mistral",   "id": 4},
         ])
 
     def _all_settings(self):
         return {
             "xai_api_key":       "xai_key",
-            "mistral_api_key":   "mistral_key",
-            "google_api_key":    "google_key",
             "anthropic_api_key": "anthropic_key",
+            "google_api_key":    "google_key",
+            "mistral_api_key":   "mistral_key",
         }
 
     def test_all_available_selects_first_3(self):
         pool = self.select(self._all_settings(), self._all_models_db())
         self.assertEqual(len(pool), 3)
         names = [p["model_name"] for p in pool]
-        # First 3 in priority order (Claude is 4th / substitute — not needed)
+        # First 3 in priority order (Mistral-large is 4th / substitute — not needed)
         self.assertIn("grok-4.20-0309-non-reasoning", names)
-        self.assertIn("magistral-medium-latest", names)
+        self.assertIn("claude-haiku-4-5", names)
         self.assertIn("gemini-2.5-flash-lite", names)
-        self.assertNotIn("claude-haiku-4-5", names)
+        self.assertNotIn("mistral-large-latest", names)
 
     def test_missing_first_priority_falls_back(self):
         settings = self._all_settings()
@@ -485,23 +488,23 @@ class TestSelectPoolModels(unittest.TestCase):
         pool = self.select(settings, self._all_models_db())
         self.assertEqual(len(pool), 3)
         names = [p["model_name"] for p in pool]
-        # Grok missing → Magistral, Gemini, Claude-haiku
+        # Grok missing → Claude-haiku, Gemini, Mistral-large
         self.assertNotIn("grok-4.20-0309-non-reasoning", names)
-        self.assertIn("magistral-medium-latest", names)
-        self.assertIn("gemini-2.5-flash-lite", names)
         self.assertIn("claude-haiku-4-5", names)
+        self.assertIn("gemini-2.5-flash-lite", names)
+        self.assertIn("mistral-large-latest", names)
 
-    def test_claude_used_as_substitute_at_most_once(self):
-        """Only 2 non-Claude candidates available → Claude fills 1 slot, total=3."""
+    def test_mistral_used_as_substitute_at_most_once(self):
+        """Only 2 primary candidates available → Mistral-large fills 1 slot, total=3."""
         settings = {
-            "mistral_api_key":   "key",
-            "google_api_key":    "key",
             "anthropic_api_key": "key",
+            "google_api_key":    "key",
+            "mistral_api_key":   "key",
         }
         pool = self.select(settings, self._all_models_db())
         self.assertEqual(len(pool), 3)
-        claude_count = sum(1 for p in pool if p["model_name"] == "claude-haiku-4-5")
-        self.assertEqual(claude_count, 1)
+        mistral_count = sum(1 for p in pool if p["model_name"] == "mistral-large-latest")
+        self.assertEqual(mistral_count, 1)
 
     def test_too_few_models_returns_empty(self):
         """Only 1 model available → cannot form a pool of 3."""
@@ -512,10 +515,10 @@ class TestSelectPoolModels(unittest.TestCase):
     def test_model_not_in_db_is_skipped(self):
         """Pool candidate with no DB row is skipped."""
         db = _make_mock_db([
-            # Magistral and Gemini exist but Grok does not
-            {"name": "magistral-medium-latest", "provider": "mistral",   "id": 2},
-            {"name": "gemini-2.5-flash-lite",   "provider": "google",    "id": 3},
-            {"name": "claude-haiku-4-5",        "provider": "anthropic", "id": 4},
+            # Claude-haiku and Gemini exist but Grok does not
+            {"name": "claude-haiku-4-5",       "provider": "anthropic", "id": 2},
+            {"name": "gemini-2.5-flash-lite",  "provider": "google",    "id": 3},
+            {"name": "mistral-large-latest",   "provider": "mistral",   "id": 4},
         ])
         settings = self._all_settings()
         pool = self.select(settings, db)
