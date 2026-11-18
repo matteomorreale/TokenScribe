@@ -44,3 +44,6 @@ agents/log_history/
 .vscode/
 *.swp
 *.swo
+
+# Claude Code (dati locali e skill)
+.claude/
