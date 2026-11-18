@@ -240,7 +240,7 @@
   <div class="ts-danger-zone-title">⚠ Danger Zone</div>
   <p style="font-size:.85rem; color:var(--ts-text-muted); margin-bottom:1rem;">
     Resetting the database will permanently delete all studies, prompts, translations, and experiment results.
-    Seed data (languages, writing systems, providers, models) will be restored.
+    Seed data (languages, writing systems, providers, models) will be restored. Saved API keys are deleted too.
   </p>
   <form method="post" action="{{ url_for('settings.reset_database') }}" id="ts-reset-db-form">
     <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;">

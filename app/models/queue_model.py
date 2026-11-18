@@ -9,7 +9,7 @@ di esecuzione asincrona delle RUN. Thread-safe via SQLite WAL + transazioni atom
 import json
 from datetime import datetime, timezone
 
-from .database import DatabaseManager
+from .database import DatabaseManager, chunks
 
 # Stati validi per un item di coda
 ITEM_PENDING   = "pending"
@@ -307,15 +307,25 @@ class QueueModel:
             if not ids_to_reset:
                 return 0
 
-            placeholders = ",".join("?" * len(ids_to_reset))
-            conn.execute(
-                f"""UPDATE run_queue
-                    SET status = ?, started_at = NULL, completed_at = NULL, error_message = NULL
-                    WHERE id IN ({placeholders})""",
-                [ITEM_PENDING] + ids_to_reset,
-            )
+            for ids in chunks(ids_to_reset):
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(
+                    f"""UPDATE run_queue
+                        SET status = ?, started_at = NULL, completed_at = NULL, error_message = NULL
+                        WHERE id IN ({placeholders})""",
+                    [ITEM_PENDING] + ids,
+                )
             conn.commit()
             return len(ids_to_reset)
+        finally:
+            conn.close()
+
+    def count_running(self) -> int:
+        conn = self.db.get_connection()
+        try:
+            return conn.execute(
+                "SELECT COUNT(*) FROM run_queue WHERE status = ?", (ITEM_RUNNING,)
+            ).fetchone()[0]
         finally:
             conn.close()
 
@@ -393,13 +403,14 @@ class QueueModel:
                     ids_to_reset.append(r["id"])
 
             if ids_to_reset:
-                placeholders = ",".join("?" * len(ids_to_reset))
-                conn.execute(
-                    f"""UPDATE run_queue
-                        SET status='pending', started_at=NULL, completed_at=NULL, error_message=NULL
-                        WHERE id IN ({placeholders})""",
-                    ids_to_reset,
-                )
+                for ids in chunks(ids_to_reset):
+                    placeholders = ",".join("?" * len(ids))
+                    conn.execute(
+                        f"""UPDATE run_queue
+                            SET status='pending', started_at=NULL, completed_at=NULL, error_message=NULL
+                            WHERE id IN ({placeholders})""",
+                        ids,
+                    )
                 conn.commit()
                 return len(ids_to_reset)
 
@@ -446,9 +457,9 @@ class QueueModel:
                     p = {}
                 if int(p.get("model_id", -1)) == old_model_id:
                     old_ids.append(r["id"])
-            if old_ids:
-                placeholders = ",".join("?" * len(old_ids))
-                conn.execute(f"DELETE FROM run_queue WHERE id IN ({placeholders})", old_ids)
+            for ids in chunks(old_ids):
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(f"DELETE FROM run_queue WHERE id IN ({placeholders})", ids)
 
             # Crea item per il nuovo modello
             count = 0

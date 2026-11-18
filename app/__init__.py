@@ -5,7 +5,9 @@ Author: Matteo Morreale
 
 import os
 from pathlib import Path
-from flask import Flask
+from urllib.parse import urlparse
+
+from flask import Flask, abort, request
 from config import config_map, TokenScribeConfig, BASE_DIR
 from app.models.database import DatabaseManager
 from app.models.queue_model import QueueModel
@@ -29,6 +31,17 @@ def create_app(env: str = "default") -> Flask:
     # Load configuration
     cfg = config_map.get(env, config_map["default"])
     app.config.from_object(cfg)
+    if not app.config["SECRET_KEY"]:
+        raise RuntimeError("Set TOKENSCRIBE_SECRET_KEY (required in production).")
+
+    # CSRF: browsers always send Origin (or Referer) on cross-site POSTs. Requests with neither
+    # (curl, tests) are not browser-driven, so they pass.
+    @app.before_request
+    def reject_cross_site_writes():
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            source = request.headers.get("Origin") or request.headers.get("Referer")
+            if source and urlparse(source).netloc != request.host:
+                abort(403)
 
     # Bootstrap database
     db = DatabaseManager(app.config["DATABASE_PATH"])
@@ -48,12 +61,18 @@ def create_app(env: str = "default") -> Flask:
     # (partial/running/queued) with no pending/running items — covers cases such as:
     #   • app crash between mark_done and recompute_run_status
     #   • status set by older code logic that didn't account for attempt_index
-    qm = QueueModel(db)
-    qm.recover_stale_running()
-    qm.recompute_stale_run_statuses()
-    queue_service = QueueService(db, log_service=log_service, crypto_service=crypto_service)
-    queue_service.start()
-    app.config["QUEUE_SERVICE"] = queue_service
+    # The debug reloader runs create_app twice (parent + child). Only the child serves requests:
+    # a queue in the parent would run items twice and reset the child's running items.
+    reloader_parent = (
+        os.environ.get("TOKENSCRIBE_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+    )
+    if not reloader_parent:
+        qm = QueueModel(db)
+        qm.recover_stale_running()
+        qm.recompute_stale_run_statuses()
+        queue_service = QueueService(db, log_service=log_service, crypto_service=crypto_service)
+        queue_service.start()
+        app.config["QUEUE_SERVICE"] = queue_service
 
     # Register blueprints
     from app.controllers.study_controller import study_bp

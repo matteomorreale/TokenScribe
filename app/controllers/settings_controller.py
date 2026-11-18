@@ -4,7 +4,7 @@ Author: Matteo Morreale
 """
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
-from app.models import SettingsModel, StudyModel, PromptModel
+from app.models import SettingsModel, StudyModel, PromptModel, QueueModel
 from app.services import BatteryService
 
 settings_bp = Blueprint("settings", __name__, url_prefix="/settings")
@@ -192,7 +192,9 @@ def reset_database():
     if confirm != "RESET":
         flash('Type "RESET" to confirm database reset.', "error")
         return redirect(url_for("settings.settings_dashboard"))
-    db = current_app.config["DB"]
-    db.reset()
-    flash("Database has been reset and re-seeded.", "success")
+    if QueueModel(current_app.config["DB"]).count_running():
+        flash("Items are still running. Stop the runs and wait for them to finish, then reset.", "error")
+        return redirect(url_for("settings.settings_dashboard"))
+    current_app.config["DB"].reset()
+    flash("Database has been reset and re-seeded. API keys were deleted: enter them again.", "success")
     return redirect(url_for("settings.settings_dashboard"))

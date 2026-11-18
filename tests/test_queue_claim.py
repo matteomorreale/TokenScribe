@@ -55,3 +55,13 @@ def test_concurrent_workers_never_share_an_item(tmp_path):
 
     assert len(claimed) == n and len(set(claimed)) == n
     assert not early_none
+
+
+def test_retry_reset_handles_more_items_than_one_chunk(tmp_path):
+    qm = _queue(tmp_path, 1200)
+    conn = qm.db.get_connection()
+    conn.execute("UPDATE run_queue SET status = 'error'")
+    conn.commit()
+    conn.close()
+    assert qm.reset_items_for_retry(1) == 1200
+    assert qm.get_run_progress(1)["pending"] == 1200

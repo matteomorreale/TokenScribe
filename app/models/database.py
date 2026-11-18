@@ -12,6 +12,12 @@ import json
 from datetime import datetime, timezone
 
 
+def chunks(items: list, size: int = 500):
+    """Slices for `IN (?,...)` lists: SQLite caps bound variables (999 on older builds)."""
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
 class DatabaseManager:
     """
     Central database access class for TokenScribe.

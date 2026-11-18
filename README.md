@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="tokenscribe-logo.jpg" alt="TokenScribe" width="120">
+  <img src="app/static/img/tokenscribe-logo.jpg" alt="TokenScribe" width="120">
 </p>
 
 # TokenScribe

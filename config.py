@@ -172,6 +172,7 @@ class DevelopmentConfig(TokenScribeConfig):
 
 class ProductionConfig(TokenScribeConfig):
     DEBUG = False
+    SECRET_KEY = os.environ.get("TOKENSCRIBE_SECRET_KEY")  # no default: create_app refuses to start without it
 
 
 class TestingConfig(TokenScribeConfig):
