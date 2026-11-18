@@ -135,7 +135,9 @@ class QueueService:
                 qm.update_run_status(run_id, RUN_RUNNING)
 
                 # Esegui l'operazione con timeout in un sub-thread
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                # No `with`: its exit would wait for a stuck call and keep this worker blocked.
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
                     future = executor.submit(self._dispatch, op_type, payload)
                     try:
                         future.result(timeout=timeout)
@@ -190,6 +192,8 @@ class QueueService:
                                 message=f"Item {item_id} op={op_type} run={run_id}: {exc}",
                                 context_ref={"run_id": run_id, "item_id": item_id},
                             )
+                finally:
+                    executor.shutdown(wait=False)
 
                 # Aggiorna lo status della RUN dopo ogni item
                 qm.recompute_run_status(run_id)

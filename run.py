@@ -17,6 +17,7 @@ env = os.environ.get("FLASK_ENV", "development")
 app = create_app(env)
 
 if __name__ == "__main__":
-    host = os.environ.get("TOKENSCRIBE_HOST", "0.0.0.0")
+    # Loopback by default: the app has no login. The Werkzeug debugger runs code, so it is opt-in.
+    host = os.environ.get("TOKENSCRIBE_HOST", "127.0.0.1")
     port = int(os.environ.get("TOKENSCRIBE_PORT", 5000))
-    app.run(host=host, port=port, debug=(env == "development"))
+    app.run(host=host, port=port, debug=os.environ.get("TOKENSCRIBE_DEBUG") == "1")

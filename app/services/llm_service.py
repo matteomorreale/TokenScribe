@@ -41,6 +41,10 @@ _ANTHROPIC_SEMAPHORE = threading.Semaphore(1)
 # separate 8192 path when internal reasoning tokens exhaust the budget.
 MAX_OUTPUT_TOKENS = 4096
 
+# Per-call limit, below the queue's 150 s item timeout. SDK retries stay off (max_retries=0): the
+# queue already requeues, and a retry would multiply this limit and skew the timing measurements.
+_SDK_TIMEOUT = 140
+
 
 def _openai_supports_reasoning_effort(model_name: str) -> bool:
     """True for OpenAI models that accept the reasoning_effort parameter."""
@@ -368,7 +372,7 @@ class LLMService:
             return TokenScribeCallResult(success=False, error="OpenAI API key not configured")
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=api_key)
+            client = OpenAI(api_key=api_key, timeout=_SDK_TIMEOUT, max_retries=0)
 
             max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
 
@@ -435,7 +439,7 @@ class LLMService:
         """Fallback for models only available on the Responses API (e.g. gpt-5.4-pro)."""
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=api_key)
+            client = OpenAI(api_key=api_key, timeout=_SDK_TIMEOUT, max_retries=0)
             effort = "high" if is_reasoning else _openai_low_effort(model_name)
             response = client.responses.create(
                 model=model_name,
@@ -473,7 +477,7 @@ class LLMService:
                 # backoff) would silently contaminate total_query_time_ms. The
                 # queue layer re-enqueues on RateLimitError, so retries are handled
                 # explicitly and with correct per-attempt timing.
-                client = anthropic.Anthropic(api_key=api_key, max_retries=0)
+                client = anthropic.Anthropic(api_key=api_key, max_retries=0, timeout=_SDK_TIMEOUT)
 
                 t_req = time.monotonic()
                 t_first = None
@@ -529,7 +533,10 @@ class LLMService:
         try:
             from google import genai
             from google.genai import types as genai_types
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(
+                api_key=api_key,
+                http_options=genai_types.HttpOptions(timeout=int(_SDK_TIMEOUT * 1000)),
+            )
             config = genai_types.GenerateContentConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
 
             ttft_ms = None
@@ -612,6 +619,8 @@ class LLMService:
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1",
+                timeout=_SDK_TIMEOUT,
+                max_retries=0,
             )
             max_tokens = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
             call_kwargs = dict(
@@ -685,6 +694,8 @@ class LLMService:
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://api.together.xyz/v1",
+                timeout=_SDK_TIMEOUT,
+                max_retries=0,
             )
             call_kwargs = dict(
                 model=model_name,
@@ -736,6 +747,8 @@ class LLMService:
             client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
+                timeout=_SDK_TIMEOUT,
+                max_retries=0,
             )
             call_kwargs = dict(
                 model=model_name,
@@ -778,7 +791,7 @@ class LLMService:
             return TokenScribeCallResult(success=False, error="Mistral API key not configured")
         try:
             from mistralai.client.sdk import Mistral
-            client = Mistral(api_key=api_key)
+            client = Mistral(api_key=api_key, timeout_ms=int(_SDK_TIMEOUT * 1000))
 
             ttft_ms = None
             completion_ms = None
@@ -858,6 +871,8 @@ class LLMService:
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://api.x.ai/v1",
+                timeout=_SDK_TIMEOUT,
+                max_retries=0,
             )
             max_tok = 8192 if is_reasoning else MAX_OUTPUT_TOKENS
             call_kwargs = dict(

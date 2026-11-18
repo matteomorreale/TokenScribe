@@ -69,26 +69,16 @@ class QueueModel:
         """
         conn = self.db.get_connection()
         try:
-            now = _now_iso()
-            # Legge il prossimo pending senza bloccarlo (SQLite serializza tramite WAL)
-            row = conn.execute(
-                """SELECT * FROM run_queue
-                   WHERE status = ?
-                   ORDER BY priority ASC, id ASC
-                   LIMIT 1""",
-                (ITEM_PENDING,),
+            # Single statement: with N workers a read-then-update lets all of them pick the
+            # same row, and the losers would see "empty queue" and sleep.
+            updated = conn.execute(
+                """UPDATE run_queue SET status = ?, started_at = ?
+                   WHERE id = (SELECT id FROM run_queue WHERE status = ?
+                               ORDER BY priority ASC, id ASC LIMIT 1)
+                   RETURNING *""",
+                (ITEM_RUNNING, _now_iso(), ITEM_PENDING),
             ).fetchone()
-            if not row:
-                return None
-            item_id = row["id"]
-            cur = conn.execute(
-                "UPDATE run_queue SET status = ?, started_at = ? WHERE id = ? AND status = ?",
-                (ITEM_RUNNING, now, item_id, ITEM_PENDING),
-            )
             conn.commit()
-            if cur.rowcount == 0:
-                return None  # Another worker claimed this item first
-            updated = conn.execute("SELECT * FROM run_queue WHERE id = ?", (item_id,)).fetchone()
             if not updated:
                 return None
             d = dict(updated)
